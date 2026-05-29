@@ -67,7 +67,7 @@
                 <button type="button" class="mode-choice-card" data-game-mode="chkobba">
                     <span class="mode-choice-icon">🃏</span>
                     <span class="mode-choice-title">شكبّة</span>
-                    <span class="mode-choice-sub">كوارط، خطف، وديناري</span>
+                    <span class="mode-choice-sub">كوارط قهوة، شدّ وطيّح، والشكبّة تتحسب</span>
                 </button>
             </div>
         </section>
@@ -190,31 +190,6 @@
             <button id="next-round-btn" class="primary-btn" data-i18n="next_round_btn">🔄 عاود انده</button>
         </section>
 
-        <!-- CHKOBBA SCREEN -->
-        <section id="chkobba-screen" class="screen" aria-label="شكبّة" hidden aria-hidden="true">
-            <div class="chkobba-shell">
-                <div class="chkobba-topbar">
-                    <div>
-                        <h2 id="chkobba-title">🃏 شكبّة</h2>
-                        <p id="chkobba-status">استنّى الدور...</p>
-                    </div>
-                    <div id="chkobba-timer" class="chkobba-timer"><span>وقت الدور</span><strong>00:45</strong></div>
-                </div>
-
-                <div id="chkobba-scoreboard" class="chkobba-scoreboard"></div>
-                <div id="chkobba-bracket" class="chkobba-bracket"></div>
-                <div id="chkobba-opponents" class="chkobba-opponents"></div>
-
-                <div id="chkobba-table" class="chkobba-table" aria-label="كوارط الطاولة">
-                    <div id="chkobba-table-cards" class="chkobba-table-cards"></div>
-                </div>
-
-                <div id="chkobba-hand" class="chkobba-hand" aria-label="كوارطك"></div>
-                <div id="chkobba-actions" class="chkobba-actions" aria-live="polite"></div>
-            </div>
-            <div id="chkobba-celebration" class="chkobba-celebration hidden"></div>
-        </section>
-
         <!-- COUP SCREEN -->
         <section id="coup-screen" class="screen" aria-label="كول وبوع" hidden aria-hidden="true">
             <div class="coup-topline">
@@ -249,6 +224,34 @@
             </div>
             <div id="coup-guide-tabs" class="coup-guide-tabs"></div>
             <div id="coup-guide-content" class="coup-guide-content"></div>
+        </section>
+
+        <!-- CHKOBBA SCREEN -->
+        <section id="chkobba-screen" class="screen" aria-label="شكبة أونلاين" hidden aria-hidden="true">
+            <div class="chk-shell">
+                <div class="chk-topbar">
+                    <div>
+                        <h2 id="chk-title">🃏 شكبّة</h2>
+                        <p id="chk-subtitle">شدّ كارتة وطيّحها على الطاولة.</p>
+                    </div>
+                    <div id="chk-timer" class="chk-timer">45</div>
+                </div>
+                <div id="chk-scoreboard" class="chk-scoreboard"></div>
+                <div id="chk-table-wrap" class="chk-table-wrap">
+                    <div id="chk-opponents" class="chk-opponents"></div>
+                    <div class="chk-table-felt">
+                        <div id="chk-deck-pile" class="chk-deck-pile" aria-label="الدكّة"></div>
+                        <div id="chk-table-cards" class="chk-table-cards"></div>
+                    </div>
+                    <div id="chk-me-area" class="chk-me-area"></div>
+                </div>
+                <div id="chk-action-status" class="chk-action-status">استنّى شكون يبدأ الطرح...</div>
+                <div id="chk-hand" class="chk-hand"></div>
+                <div class="chk-actions">
+                    <button id="chk-pass-btn" class="secondary-btn" type="button">طيّح للكفة</button>
+                    <button id="chk-leave-btn" class="danger-btn" type="button">اخرج مالطرح</button>
+                </div>
+            </div>
         </section>
 
         <!-- ONLINE SETUP SCREEN -->

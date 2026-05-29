@@ -79,7 +79,7 @@ const gameModes = {
     thief: { title: '🗝️ سارق، حاكم، جلّاد', start: '🚀 وزّع الكوارط', online: '🌐 العب أونلاين مع أصحابك' },
     spyfall: { title: 'ماناش هوني', start: '🚀 وزّع الكوارط', online: '🌐 العب أونلاين مع أصحابك' },
     coup: { title: '👑 كول وبوّع', start: '🚀 ابدا الكول', online: '🌐 العب أونلاين مع أصحابك' },
-    chkobba: { title: '🃏 شكبّة', start: '🌐 العب شكبّة أونلاين', online: '🌐 اعمل روم شكبّة' }
+    chkobba: { title: '🃏 شكبّة', start: '🌐 شكبّة أونلاين', online: '🌐 ادخل لطرح شكبّة' }
 };
 const thiefRoles = [
     { key:'thief', label:'سارق', icon:'🗝️', desc:'إنت السارق. حاول ما يفيقوش بيك.' },
@@ -1673,14 +1673,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // COUNTERS
     document.getElementById('imp-minus').addEventListener('click',()=>{if(impostorConfig>1){impostorConfig--;document.getElementById('val-impostors').innerText=impostorConfig;saveSettings();}});
     document.getElementById('imp-plus').addEventListener('click',()=>{impostorConfig++;document.getElementById('val-impostors').innerText=impostorConfig;saveSettings();});
-    document.getElementById('timer-minus').addEventListener('click',()=>{
-        const minTimer = currentGameMode === 'chkobba' ? 15 : 1;
-        if(timerConfig>minTimer){timerConfig--;document.getElementById('val-timer').innerText=timerConfig;saveSettings();}
-    });
-    document.getElementById('timer-plus').addEventListener('click',()=>{
-        const maxTimer = currentGameMode === 'chkobba' ? 90 : 999;
-        if(timerConfig<maxTimer){timerConfig++;document.getElementById('val-timer').innerText=timerConfig;saveSettings();}
-    });
+    document.getElementById('timer-minus').addEventListener('click',()=>{if(timerConfig>1){timerConfig--;document.getElementById('val-timer').innerText=timerConfig;saveSettings();}});
+    document.getElementById('timer-plus').addEventListener('click',()=>{timerConfig++;document.getElementById('val-timer').innerText=timerConfig;saveSettings();});
 
     // ADVANCED PANEL
     document.getElementById('adv-toggle-btn').addEventListener('click',()=>{
@@ -1746,7 +1740,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('start-game-btn').addEventListener('click',()=>{
         if (currentGameMode === 'thief') { startThiefOffline(); return; }
         if (currentGameMode === 'spyfall') { startSpyfallOffline(); return; }
-        if (currentGameMode === 'coup' || currentGameMode === 'chkobba') { showScreen('online-setup-screen'); return; }
+        if (currentGameMode === 'coup') { showScreen('online-setup-screen'); return; }
+        if (currentGameMode === 'chkobba') { showScreen('online-setup-screen'); return; }
         _cleanupOnlineGameUI();
         saveSettings();
         // Fallback names for empty inputs

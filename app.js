@@ -25,7 +25,13 @@ const i18n = {
         word_was:"الكلمة طلعت:", all_impostors_dead:"خرجتو الكذابين الكل! 🎉 المواطنين ربحو!",
         impostors_win:"الكذابين غلبوكم وسيطرو عالطرح! 😈", eliminated_msg:"طردنا {name} مالطرح!",
         elimination_cliffhanger:"أما الطرح مازال ما وفاش... زعما طلع هو الكذاب ولا؟ مانا قايلينلكم شي! 🤐",
-        continue_discussion:"⏱️ ارجعو قطعو وريشو (دقيقة بركا)"
+        continue_discussion:"⏱️ ارجعو قطعو وريشو (دقيقة بركا)",
+        chkobba_scores:"السكور",
+        chkobba_deck:"كوارط مازالت في الكومة",
+        chkobba_round:"رقم الطرح الحالي",
+        chkobba_winner:"ربح الطرح!",
+        chkobba_target_points:"وصلنا لـ",
+        chkobba_tournament:"تورنوا"
     },
     x18: {
         title:"🕵️‍♂️ شبيك تحشي فيه؟", settings_title:"ركّح زبورك للطرح", players_label:"👥 اساميكم:",
@@ -79,7 +85,7 @@ const gameModes = {
     thief: { title: '🗝️ سارق، حاكم، جلّاد', start: '🚀 وزّع الكوارط', online: '🌐 العب أونلاين مع أصحابك' },
     spyfall: { title: 'ماناش هوني', start: '🚀 وزّع الكوارط', online: '🌐 العب أونلاين مع أصحابك' },
     coup: { title: '👑 كول وبوّع', start: '🚀 ابدا الكول', online: '🌐 العب أونلاين مع أصحابك' },
-    chkobba: { title: '🃏 شكبّة', start: '🌐 شكبّة أونلاين', online: '🌐 ادخل لطرح شكبّة' }
+    chkobba: { title: '🃏 شكبّة', start: '🚀 ابدا الشكبّة', online: '🌐 العب أونلاين مع أصحابك' }
 };
 const thiefRoles = [
     { key:'thief', label:'سارق', icon:'🗝️', desc:'إنت السارق. حاول ما يفيقوش بيك.' },
@@ -200,13 +206,8 @@ function setGameMode(mode, goSetup = true) {
     currentGameMode = ['impostor','thief','spyfall','coup','chkobba'].includes(mode) ? mode : 'impostor';
     try { localStorage.setItem(GAME_MODE_KEY, currentGameMode); } catch(_) {}
     if (currentGameMode !== 'impostor') currentLang = 'tn';
-    if (currentGameMode === 'coup') {
-        timerConfig = COUP_DEFAULT_ACTION_MINUTES;
-        const timerVal = document.getElementById('val-timer');
-        if (timerVal) timerVal.innerText = timerConfig;
-    }
-    if (currentGameMode === 'chkobba') {
-        timerConfig = 45;
+    if (currentGameMode === 'coup' || currentGameMode === 'chkobba') {
+        timerConfig = currentGameMode === 'coup' ? COUP_DEFAULT_ACTION_MINUTES : 1;
         const timerVal = document.getElementById('val-timer');
         if (timerVal) timerVal.innerText = timerConfig;
     }
@@ -233,10 +234,10 @@ window.showModeSelect = showModeSelect;
 function updateGameModeUI() {
     const meta = gameModes[currentGameMode];
     if (currentGameMode !== 'coup') document.getElementById('coup-turn-indicator')?.classList.add('hidden');
+    document.body.classList.toggle('game-chkobba', currentGameMode === 'chkobba');
     document.body.classList.toggle('game-thief', currentGameMode === 'thief');
     document.body.classList.toggle('game-spyfall', currentGameMode === 'spyfall');
     document.body.classList.toggle('game-coup', currentGameMode === 'coup');
-    document.body.classList.toggle('game-chkobba', currentGameMode === 'chkobba');
     document.body.classList.toggle('game-impostor', currentGameMode === 'impostor');
     const title = document.querySelector('header h1');
     if (title) {
@@ -255,7 +256,7 @@ function updateGameModeUI() {
     const who = document.querySelector('[data-i18n="who_impostor"]');
     if (who) who.innerText = currentGameMode === 'thief' ? 'يا حاكم، شكون السارق؟' : currentGameMode === 'spyfall' ? 'شكون الspy؟' : i18n[currentLang].who_impostor;
     const timerLabel = document.querySelector('[data-i18n="timer_label"]');
-    if (timerLabel) timerLabel.innerText = currentGameMode === 'coup' ? '⏱️ وقت الدور' : currentGameMode === 'chkobba' ? '⏱️ وقت الدور بالثواني' : i18n[currentLang].timer_label;
+    if (timerLabel) timerLabel.innerText = currentGameMode === 'coup' ? '⏱️ وقت الدور' : i18n[currentLang].timer_label;
 }
 
 function showToast(msg) {
@@ -1603,7 +1604,7 @@ function _cleanupOnlineGameUI() {
 document.addEventListener('DOMContentLoaded', async () => {
 
     try { currentGameMode = localStorage.getItem(GAME_MODE_KEY) || 'impostor'; } catch(_) { currentGameMode = 'impostor'; }
-    if (!['impostor','thief','spyfall','coup','chkobba'].includes(currentGameMode)) currentGameMode = 'impostor';
+    if (!['impostor','thief','spyfall','coup'].includes(currentGameMode)) currentGameMode = 'impostor';
     currentLang = 'tn';
     x18Unlocked = hasRememberedX18Unlock();
     applyTranslations();
@@ -1625,7 +1626,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         for(let i=0;i<4;i++) addPlayerInput();
     }
     if (currentGameMode === 'coup') timerConfig = COUP_DEFAULT_ACTION_MINUTES;
-    if (currentGameMode === 'chkobba') timerConfig = 45;
     document.getElementById('val-impostors').innerText = impostorConfig;
     document.getElementById('val-timer').innerText = timerConfig;
     applyTranslations();
@@ -1741,7 +1741,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentGameMode === 'thief') { startThiefOffline(); return; }
         if (currentGameMode === 'spyfall') { startSpyfallOffline(); return; }
         if (currentGameMode === 'coup') { showScreen('online-setup-screen'); return; }
-        if (currentGameMode === 'chkobba') { showScreen('online-setup-screen'); return; }
         _cleanupOnlineGameUI();
         saveSettings();
         // Fallback names for empty inputs

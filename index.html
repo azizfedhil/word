@@ -21,6 +21,7 @@
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script defer src="https://unpkg.com/html5-qrcode"></script>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="chkobba.css">
 </head>
 <body>
     <div class="bg-orb orb-1"></div>
@@ -67,7 +68,7 @@
                 <button type="button" class="mode-choice-card" data-game-mode="chkobba">
                     <span class="mode-choice-icon">🃏</span>
                     <span class="mode-choice-title">شكبّة</span>
-                    <span class="mode-choice-sub">كوارط قهوة، شدّ وطيّح، والشكبّة تتحسب</span>
+                    <span class="mode-choice-sub">كوارط، حساب، و"شكبّة!"</span>
                 </button>
             </div>
         </section>
@@ -226,34 +227,6 @@
             <div id="coup-guide-content" class="coup-guide-content"></div>
         </section>
 
-        <!-- CHKOBBA SCREEN -->
-        <section id="chkobba-screen" class="screen" aria-label="شكبة أونلاين" hidden aria-hidden="true">
-            <div class="chk-shell">
-                <div class="chk-topbar">
-                    <div>
-                        <h2 id="chk-title">🃏 شكبّة</h2>
-                        <p id="chk-subtitle">شدّ كارتة وطيّحها على الطاولة.</p>
-                    </div>
-                    <div id="chk-timer" class="chk-timer">45</div>
-                </div>
-                <div id="chk-scoreboard" class="chk-scoreboard"></div>
-                <div id="chk-table-wrap" class="chk-table-wrap">
-                    <div id="chk-opponents" class="chk-opponents"></div>
-                    <div class="chk-table-felt">
-                        <div id="chk-deck-pile" class="chk-deck-pile" aria-label="الدكّة"></div>
-                        <div id="chk-table-cards" class="chk-table-cards"></div>
-                    </div>
-                    <div id="chk-me-area" class="chk-me-area"></div>
-                </div>
-                <div id="chk-action-status" class="chk-action-status">استنّى شكون يبدأ الطرح...</div>
-                <div id="chk-hand" class="chk-hand"></div>
-                <div class="chk-actions">
-                    <button id="chk-pass-btn" class="secondary-btn" type="button">طيّح للكفة</button>
-                    <button id="chk-leave-btn" class="danger-btn" type="button">اخرج مالطرح</button>
-                </div>
-            </div>
-        </section>
-
         <!-- ONLINE SETUP SCREEN -->
         <section id="online-setup-screen" class="screen" aria-label="إعدادات الأونلاين" hidden aria-hidden="true">
             <h2>🌐 العب أونلاين</h2>
@@ -295,6 +268,29 @@
             <p id="lobby-wait-msg" style="text-align:center; font-weight:700;">⏳ نستنا لاعبين...</p>
             <button id="online-start-btn" class="primary-btn hidden">🚀 ابدأ اللعبة</button>
             <button id="leave-room-btn" class="danger-btn" style="margin-top:16px;">🚪 اخرج من الغرفة</button>
+        </section>
+
+        <!-- CHKOBBA SCREEN -->
+        <section id="chkobba-screen" class="screen chkobba-screen" aria-label="شكبّة" hidden aria-hidden="true">
+            <div id="chkobba-deal-layer" class="chkobba-deal-layer" aria-hidden="true"></div>
+            <div class="chkobba-stage">
+                <div id="chkobba-opening-panel" class="chkobba-opening-panel" hidden></div>
+                <div class="chkobba-opponents" id="chkobba-opponents"></div>
+
+                <div class="chkobba-table-wrap">
+                    <div id="chkobba-piles" class="chkobba-piles">
+                        <div class="chkobba-pile deck-pile" id="chkobba-deck-pile" aria-label="الكومة"></div>
+                        <div class="chkobba-pile capture-pile" id="chkobba-my-capture-pile" aria-label="الماكول"></div>
+                    </div>
+                    <div class="chkobba-table" id="chkobba-table"></div>
+                </div>
+
+                <div class="chkobba-info" id="chkobba-round-info"></div>
+            </div>
+
+            <div class="chkobba-hand-dock">
+                <div class="chkobba-hand" id="chkobba-my-hand"></div>
+            </div>
         </section>
 
         <!-- ONLINE CARD SCREEN -->
@@ -350,6 +346,7 @@
     <script defer src="app.js"></script>
     <script defer src="online.js"></script>
     <script defer src="voice.js"></script>
+    <script defer src="chkobba_logic.js"></script>
     <script defer src="analytics.js"></script>
 </body>
 </html>

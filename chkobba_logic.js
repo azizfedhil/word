@@ -70,8 +70,9 @@ const ChkobbaLogic = {
     createNewGameState: function(playerDefs, options = {}) {
         const deck = this.createDeck();
         const n = playerDefs.length;
-        const dealerIndex = 0;
-        const cutterIndex = n > 1 ? 1 : 0;
+        // Random cutter each match; dealer is the opponent who deals after the cut.
+        const cutterIndex = n > 1 ? Math.floor(Math.random() * n) : 0;
+        const dealerIndex = n > 1 ? (cutterIndex + 1) % n : 0;
 
         return {
             deck,
@@ -146,6 +147,30 @@ const ChkobbaLogic = {
         return this.finishInitialDeal(state);
     },
 
+    /** Cutter places revealed card on table; dealer gives 3 each, table totals 4. */
+    declineStarterCard: function(state) {
+        if (state.setupPhase !== this.SETUP_PHASES.REVEALED || !state.starterCard) return false;
+
+        state.setupPhase = this.SETUP_PHASES.ACCEPTED;
+        state.table = [state.starterCard];
+        state.starterCard = null;
+
+        state.players.forEach(p => {
+            while (p.hand.length < 3 && state.deck.length > 0) {
+                p.hand.push(state.deck.pop());
+            }
+        });
+
+        while (state.table.length < 4 && state.deck.length > 0) {
+            state.table.push(state.deck.pop());
+        }
+
+        if (state.table.length < 4 || state.players.some(p => p.hand.length < 3)) return false;
+
+        state.log = 'الكارطة على الطاولة — بدا الطرح.';
+        return this._beginPlayingAfterSetup(state);
+    },
+
     finishInitialDeal: function(state) {
         if (state.deck.length < 4) return false;
 
@@ -162,10 +187,16 @@ const ChkobbaLogic = {
             }
         });
 
+        return this._beginPlayingAfterSetup(state);
+    },
+
+    _beginPlayingAfterSetup: function(state) {
         state.setupPhase = this.SETUP_PHASES.DEAL_COMPLETE;
         state.phase = 'playing';
         state.turnIndex = state.dealerIndex;
-        state.log = 'بدا الطرح، بالتوفيق!';
+        if (state.log !== 'الكارطة على الطاولة — بدا الطرح.') {
+            state.log = 'بدا الطرح، بالتوفيق!';
+        }
         return true;
     },
 
@@ -257,10 +288,10 @@ const ChkobbaLogic = {
     getValidCaptures: function(playedCard, tableCards) {
         const targetValue = playedCard.value;
 
-        // Rule 1: Mandatory identical-value capture
-        const directMatch = tableCards.find(c => c.value === targetValue);
-        if (directMatch) {
-            return [[directMatch]]; // MUST take the single matching card
+        // Rule 1: Mandatory identical-value capture — each table card is a separate option (by id).
+        const directMatches = tableCards.filter(c => c.value === targetValue);
+        if (directMatches.length > 0) {
+            return directMatches.map(c => [c]);
         }
 
         // Rule 2: Sum combinations

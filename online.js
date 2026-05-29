@@ -619,6 +619,8 @@ let _chkobbaPlaySession = null;
 let _chkobbaLastSnapshot = null;
 let _chkobbaExpandedInfoPill = null;
 let _chkobbaSkipDealAnim = false;
+let _chkobbaAnimating = false;
+let _chkobbaOpponentPillEls = new Map();
 
 function _bindChkobbaCardImg(img, card) {
     const logic = window.ChkobbaLogic;
@@ -672,7 +674,104 @@ function _tableCardRotation(index, cardId) {
 
 function _handCardTilt(index, total) {
     const mid = (total - 1) / 2;
-    return (index - mid) * 5;
+    return (index - mid) * 4.5;
+}
+
+/** GPU-friendly card flight; calls onDone when finished (or immediately if reduced motion). */
+function _animateChkobbaFlight({ fromRect, toRect, imgSrc, duration = 260, rotate = 6, withGhost = false, onDone }) {
+    if (_prefersReducedMotion() || !fromRect || !toRect) {
+        onDone?.();
+        return;
+    }
+    const layer = document.getElementById('chkobba-deal-layer');
+    if (!layer) { onDone?.(); return; }
+
+    const flyer = document.createElement('div');
+    flyer.className = 'chkobba-flight-card';
+
+    // Calculate offsets based on top-left anchor
+    const fx = fromRect.left + fromRect.width / 2;
+    const fy = fromRect.top + fromRect.height / 2;
+    const tx = toRect.left + toRect.width / 2;
+    const ty = toRect.top + toRect.height / 2;
+
+    // Start position
+    flyer.style.transform = `translate3d(${fx}px, ${fy}px, 0) scale(1) rotate(${rotate}deg) translate(-50%, -50%)`;
+
+    const img = document.createElement('img');
+    img.src = imgSrc;
+    flyer.appendChild(img);
+    layer.appendChild(flyer);
+
+    // Optional Ghost Trail
+    let ghost;
+    if (withGhost) {
+        ghost = document.createElement('div');
+        ghost.className = 'chkobba-ghost-trail';
+        ghost.style.transform = flyer.style.transform;
+        const gImg = document.createElement('img');
+        gImg.src = imgSrc;
+        ghost.appendChild(gImg);
+        layer.appendChild(ghost);
+    }
+
+    // Trigger GPU animation
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const endTransform = `translate3d(${tx}px, ${ty}px, 0) scale(0.85) rotate(${rotate * 0.35}deg) translate(-50%, -50%)`;
+            flyer.style.transform = endTransform;
+
+            if (ghost) {
+                // Ghost lags slightly behind visually via timing
+                setTimeout(() => {
+                    ghost.style.transform = endTransform;
+                    ghost.style.opacity = '0';
+                }, 60);
+            }
+        });
+    });
+
+    const finish = () => {
+        flyer.remove();
+        if (ghost) setTimeout(() => ghost.remove(), 500);
+        onDone?.();
+    };
+    flyer.addEventListener('transitionend', finish, { once: true });
+    // Safety fallback
+    setTimeout(finish, duration + 50);
+}
+
+function _animateChkobbaFlightsSequential(flights, onDone) {
+    if (!flights.length || _prefersReducedMotion()) {
+        onDone?.();
+        return;
+    }
+    let started = 0;
+    let finished = 0;
+    const total = flights.length;
+
+    const startNext = () => {
+        if (started >= total) return;
+        const { staggerAfter, ...flightOpts } = flights[started++];
+
+        _animateChkobbaFlight({
+            ...flightOpts,
+            onDone: () => {
+                finished++;
+                if (finished >= total) onDone?.();
+            }
+        });
+
+        if (started < total) {
+            setTimeout(startNext, staggerAfter || 0);
+        }
+    };
+    startNext();
+}
+
+function _chkobbaHandCardEl(handIndex) {
+    return document.querySelector(`#chkobba-my-hand .hand-card[data-index="${handIndex}"]`)
+        || document.querySelectorAll('#chkobba-my-hand .hand-card')[handIndex];
 }
 
 function _renderChkobbaCard(card, opts = {}) {
@@ -694,8 +793,9 @@ function _renderChkobbaCard(card, opts = {}) {
     } else {
         const tilt = _handCardTilt(index, total);
         div.style.setProperty('--tilt', `${tilt}deg`);
-        div.style.setProperty('--stack-offset', `${tilt * 0.4}px`);
-        if (index > 0) div.style.setProperty('--stack-overlap', '18');
+        div.style.setProperty('--stack-offset', `${tilt * 0.45}px`);
+        div.style.setProperty('--hand-z', String(10 + index));
+        if (index > 0) div.style.setProperty('--stack-overlap', '20');
         if (interactive) {
             div.draggable = true;
             div.addEventListener('dragstart', _onChkobbaDragStart);
@@ -704,6 +804,10 @@ function _renderChkobbaCard(card, opts = {}) {
                 e.stopPropagation();
                 _armChkobbaHandCard(div);
             });
+            div.addEventListener('pointerdown', () => div.classList.add('is-lifted'));
+            div.addEventListener('pointerup', () => div.classList.remove('is-lifted'));
+            div.addEventListener('pointercancel', () => div.classList.remove('is-lifted'));
+            div.addEventListener('pointerleave', () => div.classList.remove('is-lifted'));
             _bindChkobbaPointerDrag(div);
         }
     }
@@ -818,7 +922,7 @@ function _ensureChkobbaTableListeners() {
     });
     tableCont.addEventListener('drop', _onChkobbaTableDrop);
     tableCont.addEventListener('click', (e) => {
-        if (e.target === tableCont && _chkobbaPlaySession?.phase === 'armed') {
+        if (_chkobbaPlaySession?.phase === 'armed' && !e.target.closest('.table-card')) {
             _commitChkobbaPlayToTable();
         }
     });
@@ -3370,9 +3474,46 @@ async function _stopScanner() {
     if (btn) btn.innerText = '📷 امسح الكود';
 }
 
+function _initChkobbaReactions() {
+    const chkobbaReactBar = document.getElementById('chkobba-reactions');
+    const dock = document.querySelector('.chkobba-hand-dock');
+    if (chkobbaReactBar && dock) {
+        // Show bar when clicking hand dock background
+        dock.addEventListener('click', (e) => {
+            if(e.target.closest('.chkobba-card')) return;
+            chkobbaReactBar.classList.add('show');
+
+            // Auto hide after 3 seconds
+            clearTimeout(chkobbaReactBar._hideTimer);
+            chkobbaReactBar._hideTimer = setTimeout(() => {
+                chkobbaReactBar.classList.remove('show');
+            }, 3000);
+        });
+
+        chkobbaReactBar.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (typeof _sfx !== 'undefined') _sfx.tap();
+                chkobbaReactBar.classList.remove('show');
+
+                // Broadcast reaction
+                if (_channel) {
+                    _channel.send({
+                        type: 'broadcast',
+                        event: 'reaction',
+                        payload: { name: _myName, msg: btn.innerText, sfx: 'notify' }
+                    });
+                    _showReactionFloat(_myName + ': ' + btn.innerText);
+                }
+            });
+        });
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const scanBtn = document.getElementById('open-scanner-btn');
     if (scanBtn) scanBtn.addEventListener('click', _startScanner);
+    _initChkobbaReactions();
 });
 
 // Expose for verification/debugging
@@ -3389,6 +3530,7 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
     const mode = cfg.chkobbaMode || '1v1';
     const target = cfg.chkobbaTarget || 21;
     const tournament = !!cfg.chkobbaTournament;
+    const turnTime = cfg.chkobbaTurnTime || 45;
 
     // Mode names map
     const modeLabels = {
@@ -3435,6 +3577,17 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
                 </div>
             </div>
 
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-title">⏱️ وقت الدور (ثانية)</span>
+                </div>
+                <div class="counter-group">
+                    <button class="counter-btn" id="chk-time-minus">−</button>
+                    <span class="counter-value" id="chk-time-val">${turnTime}</span>
+                    <button class="counter-btn" id="chk-time-plus">+</button>
+                </div>
+            </div>
+
             <div class="toggle-row" style="border-bottom:none; margin-top:16px;">
                 <span class="toggle-label">🏆 نظام تورنوا</span>
                 <div class="toggle-switch ${tournament?'active':''}" id="chk-tournament-tog">
@@ -3468,6 +3621,9 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
     wrap.querySelector('#chk-target-minus').onclick = () => updateConfig({ chkobbaTarget: Math.max(11, target - 10) });
     wrap.querySelector('#chk-target-plus').onclick = () => updateConfig({ chkobbaTarget: Math.min(101, target + 10) });
 
+    wrap.querySelector('#chk-time-minus').onclick = () => updateConfig({ chkobbaTurnTime: Math.max(15, turnTime - 15) });
+    wrap.querySelector('#chk-time-plus').onclick = () => updateConfig({ chkobbaTurnTime: Math.min(120, turnTime + 15) });
+
     wrap.querySelector('#chk-tournament-tog').onclick = () => {
         updateConfig({ chkobbaTournament: !tournament });
     };
@@ -3478,6 +3634,7 @@ async function _startOnlineChkobbaGame() {
     const allP = _room.players || [];
     const cfg = _room.config || {};
     const mode = cfg.chkobbaMode || '1v1';
+    const turnTime = cfg.chkobbaTurnTime || 45;
 
     // Validate player count for mode
     const needed = mode === '1v1' ? 2 : mode === '1v1v1' ? 3 : 4;
@@ -3508,8 +3665,10 @@ async function _startOnlineChkobbaGame() {
     );
 
     try {
+        const timerEndAt = new Date(_syncedNow() + turnTime * 1000).toISOString();
         await _update(_room.code, {
             state: 'chkobba',
+            timer_end_at: timerEndAt,
             word_obj: state,
             config: { ...cfg, gameMode: 'chkobba' }
         });
@@ -3577,13 +3736,19 @@ function _renderChkobbaOpening(room, state) {
     } else if (sp === logic.SETUP_PHASES.REVEALED && state.starterCard) {
         panel.innerHTML = `
             <h3>🃏 الكارطة الأولى</h3>
-            <p>${amCutter ? 'شوف الكارطة — إذا تعجبك، قبلها.' : `⏳ <strong>${_esc(cutter?.name || '')}</strong> يقرر...`}</p>
+            <p>${amCutter ? 'شوف الكارطة — قبلها ولا ارميها على الطاولة.' : `⏳ <strong>${_esc(cutter?.name || '')}</strong> يقرر...`}</p>
             <div class="chkobba-opening-starter" id="chkobba-starter-slot"></div>
-            ${amCutter ? '<button type="button" class="primary-btn" id="chkobba-accept-starter-btn">✅ قبل الكارطة</button>' : ''}
-            ${amDealer && !amCutter ? '<p>إذا قبلها، التاجر يعطيه كارتين زيادة.</p>' : ''}
+            ${amCutter ? `
+                <div class="chkobba-opening-actions">
+                    <button type="button" class="primary-btn" id="chkobba-accept-starter-btn">✅ قبل الكارطة</button>
+                    <button type="button" class="secondary-btn" id="chkobba-decline-starter-btn">🃏 ارميها على الطاولة</button>
+                </div>
+            ` : ''}
+            ${amDealer && !amCutter ? '<p>إذا قبلها، التاجر يعطيه كارتين زيادة. وإلا تبقى على الطاولة.</p>' : ''}
         `;
+        const displayCard = amCutter ? state.starterCard : { id: 'hidden', suit: 'back', value: 0 };
         panel.querySelector('#chkobba-starter-slot')?.appendChild(
-            _renderChkobbaCard(state.starterCard, { zone: 'table', index: 0, interactive: false })
+            _renderChkobbaCard(displayCard, { zone: 'table', index: 0, interactive: false })
         );
     } else {
         panel.innerHTML = `<h3>⏳ تحضير الطرح</h3><p>${_esc(state.log || '')}</p>`;
@@ -3591,6 +3756,46 @@ function _renderChkobbaOpening(room, state) {
 
     panel.querySelector('#chkobba-cut-btn')?.addEventListener('click', () => _chkobbaPerformCut());
     panel.querySelector('#chkobba-accept-starter-btn')?.addEventListener('click', () => _chkobbaAcceptStarter());
+    panel.querySelector('#chkobba-decline-starter-btn')?.addEventListener('click', () => _chkobbaDeclineStarter());
+}
+
+async function _chkobbaDeclineStarter() {
+    if (!_room?.word_obj) return;
+    const logic = window.ChkobbaLogic;
+    const state = _room.word_obj;
+    if (state.players[state.cutterIndex]?.id !== _myId) return;
+
+    const starterSlot = document.getElementById('chkobba-starter-slot');
+    const tableEl = document.getElementById('chkobba-table');
+    const cardImg = state.starterCard && logic.getCardAsset(state.starterCard);
+
+    const runMutate = async () => {
+        await _mutatePlayers(_room.code, (players, room) => {
+            const s = room.word_obj;
+            if (!logic.declineStarterCard(s)) return null;
+            return players;
+        }, null, (room, players) => ({ word_obj: room.word_obj }));
+        _chkobbaLastSnapshot = null;
+    };
+
+    if (_prefersReducedMotion() || !starterSlot || !tableEl || !cardImg) {
+        await runMutate();
+        return;
+    }
+
+    _chkobbaAnimating = true;
+    const fromRect = starterSlot.getBoundingClientRect();
+    const toRect = tableEl.getBoundingClientRect();
+    _animateChkobbaFlight({
+        fromRect,
+        toRect,
+        imgSrc: cardImg,
+        rotate: -8,
+        onDone: async () => {
+            _chkobbaAnimating = false;
+            await runMutate();
+        }
+    });
 }
 
 async function _chkobbaPerformCut() {
@@ -3619,6 +3824,88 @@ async function _chkobbaAcceptStarter() {
     }, null, (room, players) => ({ word_obj: room.word_obj }));
 
     _chkobbaLastSnapshot = null;
+}
+
+function _buildChkobbaOpponentPillHtml(p, state, { active, isTeammate, isExpanded, offline, dinari }) {
+    const isMe = p.id === _myId;
+    return `
+        <div class="pill-main">
+            <div class="pill-name">${_esc(p.name)}${isMe ? ' <span class="you-tag">أنا</span>' : ''}${active ? ' ●' : ''}</div>
+            <div class="pill-stats-row">
+                <div class="pill-stat" title="كوارط في اليد">🃏 ${p.hand.length}</div>
+                <div class="pill-stat" title="الماكول">📥 ${p.captured?.length || 0}</div>
+                <div class="pill-stat" title="السكور">🏆 ${p.totalScore}</div>
+            </div>
+            <div class="pill-chevron">${isExpanded ? '▲' : '▼'}</div>
+        </div>
+        ${isExpanded ? `
+            <div class="pill-details">
+                <div class="pill-details-grid">
+                    <div class="detail-row"><span>الشكبّات</span><strong>${p.chkobbas || 0}</strong></div>
+                    <div class="detail-row"><span>الماكول</span><strong>${p.captured?.length || 0}</strong></div>
+                    <div class="detail-row"><span>الديناري</span><strong>${dinari}</strong></div>
+                    ${offline ? '<div class="detail-row"><span>الاتصال</span><strong>غير متصل</strong></div>' : ''}
+                    <div class="detail-row"><span>الطرح</span><strong>${state.round || 1}</strong></div>
+                </div>
+            </div>
+        ` : ''}
+    `;
+}
+
+function _renderChkobbaOpponentPills(room, state, me, mode, roomPlayerMeta) {
+    const oppCont = document.getElementById('chkobba-opponents');
+    if (!oppCont) return;
+
+    oppCont.className = `chkobba-opponents mode-${mode}`;
+    const playersToRender = state.players; // Render all players including me
+    const playerIds = new Set(playersToRender.map(p => p.id));
+
+    for (const [id, el] of _chkobbaOpponentPillEls) {
+        if (!playerIds.has(id)) {
+            el.remove();
+            _chkobbaOpponentPillEls.delete(id);
+        }
+    }
+
+    playersToRender.forEach(p => {
+        const isMe = p.id === _myId;
+        const active = state.players[state.turnIndex].id === p.id;
+        const isTeammate = mode === '2v2' && p.team === me?.team;
+        const isExpanded = _onlineCoupSummaryExpandedId === p.id;
+        const meta = roomPlayerMeta[p.id];
+        const offline = !isMe && meta && meta.connected === false;
+        const dinari = p.captured?.filter(c => c.suit === 'diamonds').length || 0;
+
+        let pill = _chkobbaOpponentPillEls.get(p.id);
+        const isNew = !pill;
+
+        if (!pill) {
+            pill = document.createElement('div');
+            pill.dataset.playerId = p.id;
+            pill.className = 'chkobba-player-pill is-entering';
+            pill.addEventListener('animationend', (e) => {
+                if (e.animationName === 'chkobbaPillDropIn') pill.classList.remove('is-entering');
+            });
+            _chkobbaOpponentPillEls.set(p.id, pill);
+            oppCont.appendChild(pill);
+        }
+
+        pill.dataset.expanded = String(isExpanded);
+        pill.className = `chkobba-player-pill ${active ? 'is-turn' : ''} ${isMe ? 'is-me' : ''} ${isTeammate ? 'is-teammate' : ''} ${isExpanded ? 'is-expanded' : ''} ${offline ? 'is-offline' : ''}${isNew ? ' is-entering' : ''}`;
+
+        pill.innerHTML = _buildChkobbaOpponentPillHtml(p, state, { active, isTeammate, isExpanded, offline, dinari });
+
+        pill.onclick = () => {
+            _onlineCoupSummaryExpandedId = isExpanded ? null : p.id;
+            _showOnlineChkobba(room);
+        };
+    });
+
+    // Maintain order
+    playersToRender.forEach(p => {
+        const el = _chkobbaOpponentPillEls.get(p.id);
+        if (el) oppCont.appendChild(el);
+    });
 }
 
 function _maybeShowChkobbaAnnouncement(state) {
@@ -3654,56 +3941,64 @@ function _renderChkobbaInfoPills(state, me) {
         };
         infoCont.appendChild(el);
     });
+
+    // Voice Chat Toggle
+    const voiceActive = typeof _voiceOn !== 'undefined' && _voiceOn;
+    const vBtn = document.createElement('button');
+    vBtn.type = 'button';
+    vBtn.className = `chkobba-info-pill voice-info-pill ${voiceActive ? 'voice-active' : ''}`;
+    vBtn.innerHTML = `<span class="info-pill-collapsed">${voiceActive ? '🔴' : '🎙️'} <span class="info-pill-label">${voiceActive ? 'نقص الصوت' : 'نحل الصوت'}</span></span>`;
+    vBtn.onclick = () => {
+        if (typeof _voiceOn !== 'undefined' && _voiceOn) {
+            stopVoice();
+        } else {
+            if (_room) initVoice(_room.code);
+        }
+        setTimeout(() => _renderChkobbaInfoPills(state, me), 200);
+    };
+    infoCont.appendChild(vBtn);
 }
 
-function _animateChkobbaDeal(deckEl, handEl, count, onDone) {
+async function _animateChkobbaDeal(deckEl, handEl, count, onDone) {
     if (_prefersReducedMotion() || !deckEl || !handEl || count < 1) {
-        onDone?.();
-        return;
+        onDone?.(); return;
     }
-    const layer = document.getElementById('chkobba-deal-layer');
-    if (!layer) { onDone?.(); return; }
 
-    deckEl.classList.add('is-dealing');
+    // 1. Deck Pulse
+    deckEl.style.transition = "transform 140ms var(--ease-pop)";
+    deckEl.style.transform = "scale(1.06)";
+    await new Promise(r => setTimeout(r, 140));
+    deckEl.style.transform = "scale(1)";
+
     const from = deckEl.getBoundingClientRect();
     const to = handEl.getBoundingClientRect();
     const back = window.ChkobbaLogic.ASSETS.BACK;
     let finished = 0;
 
+    // Compress stagger if many cards to keep sequence ≤ 900ms
+    const staggerMs = count > 3 ? 40 : 70;
+
     for (let i = 0; i < count; i++) {
-        const clone = document.createElement('div');
-        clone.className = 'chkobba-deal-flyer';
-        clone.style.left = `${from.left + from.width / 2}px`;
-        clone.style.top = `${from.top + from.height / 2}px`;
-        clone.style.transitionDelay = `${i * 70}ms`;
-        clone.innerHTML = `<img src="${back}" alt="">`;
-        layer.appendChild(clone);
+        setTimeout(() => {
+            const targetRect = {
+                left: to.left + (i * 12), // Spread slightly in hand
+                top: to.top,
+                width: from.width, height: from.height
+            };
 
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                clone.style.left = `${to.left + to.width / 2 + (i - 1) * 12}px`;
-                clone.style.top = `${to.top + to.height * 0.5}px`;
-                clone.classList.add('is-flying');
+            _animateChkobbaFlight({
+                fromRect: from,
+                toRect: targetRect,
+                imgSrc: back,
+                rotate: (Math.random() - 0.5) * 12,
+                duration: 260,
+                onDone: () => {
+                    finished++;
+                    if (finished >= count) onDone?.();
+                }
             });
-        });
-
-        clone.addEventListener('transitionend', () => {
-            clone.remove();
-            finished++;
-            if (finished >= count) {
-                deckEl.classList.remove('is-dealing');
-                onDone?.();
-            }
-        }, { once: true });
+        }, i * staggerMs);
     }
-
-    setTimeout(() => {
-        if (finished < count) {
-            layer.innerHTML = '';
-            deckEl.classList.remove('is-dealing');
-            onDone?.();
-        }
-    }, count * 70 + 600);
 }
 
 function _showOnlineChkobba(room) {
@@ -3722,6 +4017,8 @@ function _showOnlineChkobba(room) {
 
     const playLocked = window.ChkobbaLogic.isSetupPhase(state);
     const canInteract = isMyTurn && !playLocked;
+    const handDock = document.querySelector('.chkobba-hand-dock');
+    handDock?.classList.toggle('is-inactive-turn', state.phase === 'playing' && !isMyTurn);
 
     const prevSnap = _chkobbaLastSnapshot;
     let dealCount = 0;
@@ -3739,53 +4036,7 @@ function _showOnlineChkobba(room) {
 
     _maybeShowChkobbaAnnouncement(state);
 
-    const oppCont = document.getElementById('chkobba-opponents');
-    oppCont.innerHTML = '';
-    oppCont.className = `chkobba-opponents mode-${mode}`;
-
-    const others = state.players.filter(p => p.id !== _myId);
-    others.forEach(p => {
-        const active = state.players[state.turnIndex].id === p.id;
-        const isTeammate = mode === '2v2' && p.team === me?.team;
-        const isExpanded = _onlineCoupSummaryExpandedId === p.id;
-        const meta = roomPlayerMeta[p.id];
-        const offline = meta && meta.connected === false;
-
-        const pill = document.createElement('div');
-        pill.className = `chkobba-player-pill ${active ? 'is-turn' : ''} ${isTeammate ? 'is-teammate' : ''} ${isExpanded ? 'is-expanded' : ''} ${offline ? 'is-offline' : ''}`;
-
-        const dinari = p.captured?.filter(c => c.suit === 'diamonds').length || 0;
-        pill.innerHTML = `
-            <div class="pill-main">
-                <div class="pill-avatar">${isTeammate ? '🤝' : offline ? '📴' : '👤'}</div>
-                <div class="pill-info">
-                    <div class="pill-name">${_esc(p.name)}${active ? ' ●' : ''}</div>
-                    <div class="pill-stats">
-                        <span>🃏 ${p.hand.length}</span>
-                        <span>🏆 ${p.totalScore}</span>
-                    </div>
-                </div>
-                <div class="pill-chevron">${isExpanded ? '▲' : '▼'}</div>
-            </div>
-            ${isExpanded ? `
-                <div class="pill-details">
-                    <div class="pill-details-grid">
-                        <div class="detail-row"><span>الشكبّات</span><strong>${p.chkobbas || 0}</strong></div>
-                        <div class="detail-row"><span>الماكول</span><strong>${p.captured?.length || 0}</strong></div>
-                        <div class="detail-row"><span>الديناري</span><strong>${dinari}</strong></div>
-                        ${offline ? '<div class="detail-row"><span>الاتصال</span><strong>غير متصل</strong></div>' : ''}
-                        <div class="detail-row"><span>الطرح</span><strong>${state.round || 1}</strong></div>
-                    </div>
-                </div>
-            ` : ''}
-        `;
-
-        pill.onclick = () => {
-            _onlineCoupSummaryExpandedId = isExpanded ? null : p.id;
-            _showOnlineChkobba(room);
-        };
-        oppCont.appendChild(pill);
-    });
+    _renderChkobbaOpponentPills(room, state, me, mode, roomPlayerMeta);
 
     const tableCont = document.getElementById('chkobba-table');
     tableCont.innerHTML = '';
@@ -3854,7 +4105,157 @@ function _showOnlineChkobba(room) {
         indicator.classList.remove('hidden');
         const nameEl = document.getElementById('cti-player-name');
         if (nameEl) nameEl.innerText = state.players[state.turnIndex].name;
+        _startOnlineChkobbaTimer(room);
     }
+}
+
+let _chkobbaTimer = null;
+let _chkobbaTimingOut = false;
+
+function _startOnlineChkobbaTimer(room) {
+    clearInterval(_chkobbaTimer);
+    const timerEl = document.getElementById('chkobba-turn-timer');
+    if (!timerEl) return;
+
+    if (!room.timer_end_at || room.word_obj?.phase !== 'playing') {
+        timerEl.classList.add('hidden');
+        return;
+    }
+
+    timerEl.classList.remove('hidden');
+
+    const tick = () => {
+        const endTime = new Date(room.timer_end_at).getTime();
+        const left = Math.max(0, Math.ceil((endTime - _syncedNow()) / 1000));
+
+        const m = Math.floor(left / 60).toString().padStart(2, '0');
+        const s = (left % 60).toString().padStart(2, '0');
+        timerEl.innerText = `${m}:${s}`;
+
+        if (left <= 10) timerEl.style.color = 'var(--danger-color)';
+        else timerEl.style.color = '';
+
+        if (left <= 0 && _isHost && !_chkobbaTimingOut && room.word_obj?.phase === 'playing') {
+            _chkobbaTimeout();
+        }
+    };
+    tick();
+    _chkobbaTimer = setInterval(tick, 500);
+}
+
+async function _chkobbaTimeout() {
+    if (!_room || _chkobbaTimingOut) return;
+    _chkobbaTimingOut = true;
+    try {
+        const s = _room.word_obj;
+        if (!s || s.phase !== 'playing') return;
+        const p = s.players[s.turnIndex];
+        if (!p || p.hand.length === 0) return;
+
+        const logic = window.ChkobbaLogic;
+        let chosenCardIndex = -1;
+        let bestMatch = null;
+
+        for (let i = 0; i < p.hand.length; i++) {
+            const possible = logic.getValidCaptures(p.hand[i], s.table);
+            if (possible.length > 0) {
+                chosenCardIndex = i;
+                bestMatch = possible[0];
+                break;
+            }
+        }
+        if (chosenCardIndex === -1) chosenCardIndex = 0;
+        const cardToPlay = p.hand[chosenCardIndex];
+
+        const runActualMutate = async () => {
+            await _mutatePlayers(_room.code, (players, room) => {
+                const rs = room.word_obj;
+                if (rs.phase !== 'playing') return null;
+                const rp = rs.players[rs.turnIndex];
+                if (!rp || rp.hand.length === 0) return null;
+
+                let cIdx = rp.hand.findIndex(c => c.id === cardToPlay.id);
+                if (cIdx === -1) cIdx = 0;
+                const card = rp.hand.splice(cIdx, 1)[0];
+                const matches = logic.getValidCaptures(card, rs.table);
+                const match = matches.length > 0 ? matches[0] : null;
+
+                if (match) {
+                    const capturedIds = match.map(c => c.id);
+                    const capturedCards = rs.table.filter(c => capturedIds.includes(c.id));
+                    rs.table = rs.table.filter(c => !capturedIds.includes(c.id));
+                    const allCaptured = [card, ...capturedCards];
+                    rp.captured.push(...allCaptured);
+                    rs.lastCaptureId = rp.id;
+                    if (rs.table.length === 0 && rs.deck.length > 0) {
+                        rp.chkobbas++;
+                        rs.chkobbaEvent = { type: 'chkobba', playerId: rp.id, name: rp.name };
+                    } else if (allCaptured.some(c => c.id === 'diamonds_7') && capturedCards.some(c => c.id === 'diamonds_7')) {
+                        rs.chkobbaEvent = { type: 'berria', playerId: rp.id, name: rp.name };
+                    }
+                } else {
+                    rs.table.push(card);
+                }
+                _advanceChkobbaTurn(rs, room);
+                room.word_obj = rs;
+                return players;
+            }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
+        };
+
+        const isMe = p.id === _myId;
+        const fromEl = isMe ? _chkobbaHandCardEl(chosenCardIndex) : _chkobbaOpponentPillEls.get(p.id);
+        const toEl = bestMatch ? (_chkobbaOpponentPillEls.get(p.id) || document.getElementById('chkobba-my-capture-pile')) : document.getElementById('chkobba-table');
+
+        if (_prefersReducedMotion() || !fromEl || !toEl) {
+            await runActualMutate();
+            return;
+        }
+
+        _chkobbaAnimating = true;
+        if (isMe && fromEl) fromEl.style.opacity = '0';
+
+        if (bestMatch) {
+            const flights = [];
+            flights.push({
+                fromRect: fromEl.getBoundingClientRect(),
+                toRect: toEl.getBoundingClientRect(),
+                imgSrc: logic.getCardAsset(cardToPlay),
+                rotate: 4,
+                withGhost: true,
+                staggerAfter: 60
+            });
+            bestMatch.forEach((c, i) => {
+                const tEl = document.querySelector(`#chkobba-table .table-card[data-card-id="${c.id}"]`);
+                if (tEl) {
+                    tEl.style.opacity = '0';
+                    flights.push({
+                        fromRect: tEl.getBoundingClientRect(),
+                        toRect: toEl.getBoundingClientRect(),
+                        imgSrc: logic.getCardAsset(c),
+                        rotate: (i % 2 === 0 ? 1 : -1) * (6 + i * 2),
+                        withGhost: true,
+                        staggerAfter: 60
+                    });
+                }
+            });
+            _animateChkobbaFlightsSequential(flights, async () => {
+                _chkobbaAnimating = false;
+                await runActualMutate();
+            });
+        } else {
+            _animateChkobbaFlight({
+                fromRect: fromEl.getBoundingClientRect(),
+                toRect: toEl.getBoundingClientRect(),
+                imgSrc: logic.getCardAsset(cardToPlay),
+                rotate: -6,
+                onDone: async () => {
+                    _chkobbaAnimating = false;
+                    await runActualMutate();
+                }
+            });
+        }
+    } catch(e) { console.error(e); }
+    finally { _chkobbaTimingOut = false; }
 }
 
 function _onChkobbaDragStart(e) {
@@ -3892,62 +4293,168 @@ async function _onChkobbaTableDrop(e) {
 }
 
 async function _commitChkobbaCapture() {
+    if (_chkobbaAnimating) return;
     const ctx = _getChkobbaPlayContext();
     if (!ctx || !_chkobbaPlaySession || _chkobbaPlaySession.phase !== 'readyCapture') return;
 
     const handIndex = _chkobbaPlaySession.handIndex;
+    const playedCard = _chkobbaPlaySession.playedCard;
     const capturedIds = (_chkobbaPlaySession.captureSet || []).map(c => c.id);
+    const logic = ctx.logic;
 
-    await _mutatePlayers(_room.code, (players, room) => {
-        const s = room.word_obj;
-        const p = s.players.find(x => x.id === _myId);
-        if (!p || s.players[s.turnIndex].id !== _myId) return null;
+    const valid = logic.findMatchingCapture(playedCard, ctx.state.table, capturedIds);
+    if (!valid) {
+        showToast('ماكلة غير صالحة.');
+        _resetChkobbaPlaySession();
+        return;
+    }
 
-        const card = p.hand.splice(handIndex, 1)[0];
-        const capturedCards = s.table.filter(c => capturedIds.includes(c.id));
-        s.table = s.table.filter(c => !capturedIds.includes(c.id));
-        p.captured.push(card, ...capturedCards);
-        s.lastCaptureId = _myId;
+    const pileEl = _chkobbaOpponentPillEls.get(_myId) || document.getElementById('chkobba-my-capture-pile');
+    const handEl = _chkobbaHandCardEl(handIndex);
+    const pileRect = pileEl?.getBoundingClientRect();
+    const flights = [];
 
-        if (s.table.length === 0 && s.deck.length > 0) {
-            p.chkobbas++;
-            s.chkobbaEvent = { type: 'chkobba', playerId: _myId, name: p.name };
+    if (handEl && pileRect) {
+        handEl.style.opacity = '0';
+        flights.push({
+            fromRect: handEl.getBoundingClientRect(),
+            toRect: pileRect,
+            imgSrc: logic.getCardAsset(playedCard),
+            rotate: 4,
+            withGhost: true,
+            staggerAfter: 60
+        });
+    }
+    capturedIds.forEach((id, i) => {
+        const tableEl = document.querySelector(`#chkobba-table .table-card[data-card-id="${id}"]`);
+        const card = ctx.state.table.find(c => c.id === id);
+        if (tableEl && pileRect && card) {
+            tableEl.style.opacity = '0';
+            flights.push({
+                fromRect: tableEl.getBoundingClientRect(),
+                toRect: pileRect,
+                imgSrc: logic.getCardAsset(card),
+                rotate: (i % 2 === 0 ? 1 : -1) * (6 + i * 2),
+                withGhost: true,
+                staggerAfter: 60
+            });
         }
+    });
 
-        _advanceChkobbaTurn(s);
-        return players;
-    }, null, (room, players) => ({ word_obj: room.word_obj }));
+    const runMutate = async () => {
+        await _mutatePlayers(_room.code, (players, room) => {
+            const s = room.word_obj;
+            const p = s.players.find(x => x.id === _myId);
+            if (!p || s.players[s.turnIndex].id !== _myId) return null;
 
-    _resetChkobbaPlaySession();
+            const card = p.hand[handIndex];
+            if (!card) return null;
+            const match = logic.findMatchingCapture(card, s.table, capturedIds);
+            if (!match) return null;
+
+            p.hand.splice(handIndex, 1);
+            const capturedCards = s.table.filter(c => capturedIds.includes(c.id));
+            s.table = s.table.filter(c => !capturedIds.includes(c.id));
+            const allCaptured = [card, ...capturedCards];
+            p.captured.push(...allCaptured);
+            s.lastCaptureId = _myId;
+
+            if (s.table.length === 0 && s.deck.length > 0) {
+                p.chkobbas++;
+                s.chkobbaEvent = { type: 'chkobba', playerId: _myId, name: p.name };
+            } else if (allCaptured.some(c => c.id === 'diamonds_7') && capturedCards.some(c => c.id === 'diamonds_7')) {
+                // Trigger Berria ONLY if it was taken from the TABLE
+                s.chkobbaEvent = { type: 'berria', playerId: _myId, name: p.name };
+            }
+
+            _advanceChkobbaTurn(s, room);
+            return players;
+        }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
+
+        _resetChkobbaPlaySession();
+    };
+
+    if (_prefersReducedMotion() || !flights.length) {
+        await runMutate();
+        return;
+    }
+
+    _chkobbaAnimating = true;
+    _animateChkobbaFlightsSequential(flights, async () => {
+        _chkobbaAnimating = false;
+        await runMutate();
+    });
 }
 
 async function _commitChkobbaPlayToTable() {
+    if (_chkobbaAnimating) return;
     const ctx = _getChkobbaPlayContext();
     if (!ctx || !_chkobbaPlaySession) return;
 
     const handIndex = _chkobbaPlaySession.handIndex;
-    const captures = ctx.logic.getValidCaptures(_chkobbaPlaySession.playedCard, ctx.state.table);
+    const playedCard = _chkobbaPlaySession.playedCard;
+    const captures = ctx.logic.getValidCaptures(playedCard, ctx.state.table);
     if (captures.length > 0) {
         showToast('لازم تاكل! فما كوارط تنجم تاخذهم.');
         return;
     }
 
-    await _mutatePlayers(_room.code, (players, room) => {
-        const s = room.word_obj;
-        const p = s.players.find(x => x.id === _myId);
-        if (!p || s.players[s.turnIndex].id !== _myId) return null;
+    const handEl = _chkobbaHandCardEl(handIndex);
+    const tableEl = document.getElementById('chkobba-table');
+    const imgSrc = ctx.logic.getCardAsset(playedCard);
 
-        const card = p.hand.splice(handIndex, 1)[0];
-        s.table.push(card);
-        _advanceChkobbaTurn(s);
-        return players;
-    }, null, (room, players) => ({ word_obj: room.word_obj }));
+    const tableRect = tableEl?.getBoundingClientRect();
+    const tableCardsCount = ctx.state.table.length;
+    const targetRect = tableRect ? {
+        left: tableRect.left + (tableRect.width / 2) + (tableCardsCount * 12) - 40,
+        top: tableRect.top + (tableRect.height / 2),
+        width: tableRect.width / 4,
+        height: tableRect.height / 2
+    } : null;
 
-    _resetChkobbaPlaySession();
+    const runMutate = async () => {
+        await _mutatePlayers(_room.code, (players, room) => {
+            const s = room.word_obj;
+            const p = s.players.find(x => x.id === _myId);
+            if (!p || s.players[s.turnIndex].id !== _myId) return null;
+
+            const card = p.hand.splice(handIndex, 1)[0];
+            s.table.push(card);
+            _advanceChkobbaTurn(s, room);
+            return players;
+        }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
+
+        _resetChkobbaPlaySession();
+    };
+
+    if (_prefersReducedMotion() || !handEl || !tableEl) {
+        await runMutate();
+        return;
+    }
+
+    _chkobbaAnimating = true;
+    if (handEl) handEl.style.opacity = '0';
+    _animateChkobbaFlight({
+        fromRect: handEl.getBoundingClientRect(),
+        toRect: targetRect || tableEl.getBoundingClientRect(),
+        imgSrc,
+        rotate: -6,
+        onDone: async () => {
+            _chkobbaAnimating = false;
+            await runMutate();
+        }
+    });
 }
 
-function _advanceChkobbaTurn(state) {
+function _advanceChkobbaTurn(state, roomObj) {
     state.turnIndex = (state.turnIndex + 1) % state.players.length;
+
+    const actualRoom = roomObj || _room;
+    if (actualRoom && _isHost) {
+        const turnTime = actualRoom.config?.chkobbaTurnTime || 45;
+        const timerEndAt = new Date(_syncedNow() + turnTime * 1000).toISOString();
+        actualRoom.timer_end_at = timerEndAt;
+    }
 
     // Check if everyone played their 3 cards
     const allEmpty = state.players.every(p => p.hand.length === 0);
@@ -3959,12 +4466,12 @@ function _advanceChkobbaTurn(state) {
             });
         } else {
             // End of round scoring
-            _endChkobbaRound(state);
+            _endChkobbaRound(state, roomObj);
         }
     }
 }
 
-function _endChkobbaRound(state) {
+function _endChkobbaRound(state, roomObj) {
     // Last capture takes leftovers
     if (state.table.length > 0 && state.lastCaptureId) {
         const winner = state.players.find(p => p.id === state.lastCaptureId);
@@ -4010,18 +4517,66 @@ function _endChkobbaRound(state) {
         });
         state.round++;
         state.turnIndex = 0; // Usually dealer moves, but we'll keep it simple
+
+        const actualRoom = roomObj || _room;
+        if (actualRoom && _isHost) {
+            const turnTime = actualRoom.config?.chkobbaTurnTime || 45;
+            const timerEndAt = new Date(_syncedNow() + turnTime * 1000).toISOString();
+            actualRoom.timer_end_at = timerEndAt;
+        }
+    }
+}
+
+function _spawnChkobbaConfetti(layer, variant = 'gold') {
+    if (_prefersReducedMotion() || !layer) return;
+    const colors = variant === 'berria'
+        ? ['#528c71', '#74b9ff', '#a8e6cf', '#fff']
+        : ['#f1c051', '#ffeaa7', '#fdcb6e', '#fff'];
+    for (let i = 0; i < 14; i++) {
+        const bit = document.createElement('span');
+        bit.className = 'chkobba-confetti-bit';
+        bit.style.left = `${42 + Math.random() * 16}%`;
+        bit.style.top = `${44 + Math.random() * 12}%`;
+        bit.style.background = colors[i % colors.length];
+        bit.style.setProperty('--confetti-dx', `${(Math.random() - 0.5) * 120}px`);
+        bit.style.setProperty('--confetti-dy', `${-40 - Math.random() * 80}px`);
+        bit.style.setProperty('--confetti-rot', `${Math.random() * 540}deg`);
+        bit.style.animationDelay = `${i * 35}ms`;
+        layer.appendChild(bit);
+        setTimeout(() => bit.remove(), 1400);
     }
 }
 
 function _handleChkobbaBroadcastEvent(event) {
-    if (event.type === 'chkobba') {
-        const announce = document.createElement('div');
-        announce.className = 'chkobba-announcement';
-        announce.innerText = 'شكبّة!';
-        document.body.appendChild(announce);
-        _sfx.win();
-        setTimeout(() => announce.remove(), 2000);
-    }
+    const layer = document.getElementById('chkobba-deal-layer');
+    const isBerria = event.type === 'berria';
+    const isChkobba = event.type === 'chkobba';
+
+    if (!isBerria && !isChkobba) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = `chkobba-celebration-wrap${isBerria ? ' is-berria' : ''}`;
+
+    const cardFlip = document.createElement('div');
+    cardFlip.className = 'chkobba-celebration-card';
+    const flipImg = document.createElement('img');
+    flipImg.alt = '';
+    flipImg.src = isBerria
+        ? window.ChkobbaLogic.getCardAsset({ suit: 'diamonds', value: 7 })
+        : window.ChkobbaLogic.ASSETS.BACK;
+    cardFlip.appendChild(flipImg);
+    wrap.appendChild(cardFlip);
+
+    const announce = document.createElement('div');
+    announce.className = `chkobba-announcement chkobba-announcement--celebration${isBerria ? ' is-berria' : ''}`;
+    announce.innerText = isBerria ? 'السبعة الحية!' : 'شكبّة!';
+    wrap.appendChild(announce);
+
+    document.body.appendChild(wrap);
+    _spawnChkobbaConfetti(layer, isBerria ? 'berria' : 'gold');
+    _sfx.win();
+
+    setTimeout(() => wrap.remove(), isBerria ? 1850 : 2000);
 }
 
 // Expose for verification/debugging

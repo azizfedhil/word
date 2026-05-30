@@ -55,151 +55,6 @@ const ChkobbaLogic = {
         return d;
     },
 
-    /** Setup phases: deck_shuffled → cut → reveal → accept → initial_deal_complete */
-    SETUP_PHASES: {
-        SHUFFLED: 'deck_shuffled',
-        CUT: 'deck_cut',
-        REVEALED: 'starter_card_revealed',
-        ACCEPTED: 'starter_card_accepted',
-        DEAL_COMPLETE: 'initial_deal_complete'
-    },
-
-    /**
-     * New game state with traditional opening (no table/hand deal yet).
-     */
-    createNewGameState: function(playerDefs, options = {}) {
-        const deck = this.createDeck();
-        const n = playerDefs.length;
-        // Random cutter each match; dealer is the opponent who deals after the cut.
-        const cutterIndex = n > 1 ? Math.floor(Math.random() * n) : 0;
-        const dealerIndex = n > 1 ? (cutterIndex + 1) % n : 0;
-
-        return {
-            deck,
-            table: [],
-            players: playerDefs.map((p, idx) => ({
-                id: p.id,
-                name: p.name,
-                team: p.team ?? null,
-                hand: [],
-                captured: [],
-                chkobbas: 0,
-                totalScore: p.totalScore || 0
-            })),
-            teams: options.teams || null,
-            dealerIndex,
-            cutterIndex,
-            cutIndex: null,
-            starterCard: null,
-            setupPhase: this.SETUP_PHASES.SHUFFLED,
-            turnIndex: dealerIndex,
-            lastCaptureId: null,
-            round: options.round || 1,
-            phase: 'setup',
-            targetScore: options.targetScore || 21,
-            mode: options.mode || '1v1',
-            tournament: !!options.tournament,
-            log: 'الكومة مخلوطة — وقت القصّة.'
-        };
-    },
-
-    isSetupPhase: function(state) {
-        return state?.phase === 'setup' && state.setupPhase !== this.SETUP_PHASES.DEAL_COMPLETE;
-    },
-
-    getCutter: function(state) {
-        return state.players[state.cutterIndex] || null;
-    },
-
-    getDealer: function(state) {
-        return state.players[state.dealerIndex] || null;
-    },
-
-    /** Cutter splits the deck; reveals one card at the cut. */
-    performDeckCut: function(state, cutIndex) {
-        if (state.setupPhase !== this.SETUP_PHASES.SHUFFLED) return false;
-        if (state.deck.length < 2) return false;
-
-        const idx = Math.max(1, Math.min(state.deck.length - 1, cutIndex));
-        state.setupPhase = this.SETUP_PHASES.CUT;
-        state.cutIndex = idx;
-        state.starterCard = state.deck.splice(idx, 1)[0];
-        state.setupPhase = this.SETUP_PHASES.REVEALED;
-        state.log = 'الكارطة الأولى طلعت.';
-        return true;
-    },
-
-    /** Cutter keeps revealed card; dealer gives two more, then normal deal. */
-    acceptStarterCard: function(state) {
-        if (state.setupPhase !== this.SETUP_PHASES.REVEALED || !state.starterCard) return false;
-
-        const cutter = this.getCutter(state);
-        if (!cutter) return false;
-
-        state.setupPhase = this.SETUP_PHASES.ACCEPTED;
-        cutter.hand.push(state.starterCard);
-        state.starterCard = null;
-
-        if (state.deck.length >= 2) {
-            cutter.hand.push(state.deck.pop(), state.deck.pop());
-        }
-
-        return this.finishInitialDeal(state);
-    },
-
-    /** Cutter places revealed card on table; dealer gives 3 each, table totals 4. */
-    declineStarterCard: function(state) {
-        if (state.setupPhase !== this.SETUP_PHASES.REVEALED || !state.starterCard) return false;
-
-        state.setupPhase = this.SETUP_PHASES.ACCEPTED;
-        state.table = [state.starterCard];
-        state.starterCard = null;
-
-        state.players.forEach(p => {
-            while (p.hand.length < 3 && state.deck.length > 0) {
-                p.hand.push(state.deck.pop());
-            }
-        });
-
-        while (state.table.length < 4 && state.deck.length > 0) {
-            state.table.push(state.deck.pop());
-        }
-
-        if (state.table.length < 4 || state.players.some(p => p.hand.length < 3)) return false;
-
-        state.log = 'الكارطة على الطاولة — بدا الطرح.';
-        return this._beginPlayingAfterSetup(state);
-    },
-
-    finishInitialDeal: function(state) {
-        if (state.deck.length < 4) return false;
-
-        state.table = [
-            state.deck.pop(),
-            state.deck.pop(),
-            state.deck.pop(),
-            state.deck.pop()
-        ];
-
-        state.players.forEach(p => {
-            while (p.hand.length < 3 && state.deck.length > 0) {
-                p.hand.push(state.deck.pop());
-            }
-        });
-
-        return this._beginPlayingAfterSetup(state);
-    },
-
-    _beginPlayingAfterSetup: function(state) {
-        state.setupPhase = this.SETUP_PHASES.DEAL_COMPLETE;
-        state.phase = 'playing';
-        state.turnIndex = state.dealerIndex;
-        if (state.log !== 'الكارطة على الطاولة — بدا الطرح.') {
-            state.log = 'بدا الطرح، بالتوفيق!';
-        }
-        return true;
-    },
-
     /**
      * Centralized Asset Mapping
      */
@@ -207,78 +62,31 @@ const ChkobbaLogic = {
         BACK: 'assets/chkobba/Chkobba_dos.webp',
         POINT: 'assets/chkobba/Chkobba_point.webp',
         MAPPING: {
-            'hearts':   { folder: 'Hearts',   filePrefix: 'hearts' },
-            'spades':   { folder: 'Sapdes',   filePrefix: 'spades' },
-            'clovers':  { folder: 'clovers',  filePrefix: 'clover' },
-            'diamonds': { folder: 'diamonds', filePrefix: 'diamond' }
+            'hearts':   { folder: 'Hearts',   prefix: 'coeur' },
+            'spades':   { folder: 'Sapdes',   prefix: 'pique' },
+            'clovers':  { folder: 'clovers',  prefix: 'trèfle' },
+            'diamonds': { folder: 'diamonds', prefix: 'carreau' }
         }
     },
 
     /**
-     * Map card to its asset path (assets/chkobba/{folder}/{filePrefix}-NN.webp)
-     * Folder/filePrefix table is the single source of truth for asset renames.
+     * Map card to its asset path with robust fallback
      */
     getCardAsset: function(card) {
         if (!card) return this.ASSETS.BACK;
-        if (card.value < 1 || card.value > 10) return this.ASSETS.BACK;
 
         const suitData = this.ASSETS.MAPPING[card.suit];
         if (!suitData) return this.ASSETS.BACK;
 
         const valStr = String(card.value).padStart(2, '0');
-        return `assets/chkobba/${suitData.folder}/${suitData.filePrefix}-${valStr}.webp`;
-    },
+        const path = `assets/chkobba/${suitData.folder}/Chkobba_${suitData.prefix}_${valStr}.webp`;
 
-    resolveCardAsset: function(card) {
-        return this.getCardAsset(card);
-    },
+        // Resilience: check if it's a known missing asset or invalid value
+        if (card.value < 1 || card.value > 10) return this.ASSETS.BACK;
 
-    bindCardImage: function(img, card) {
-        if (!img) return;
-        img.src = this.resolveCardAsset(card);
-        const back = this.ASSETS.BACK;
-        const point = this.ASSETS.POINT;
-        img.onerror = function () {
-            if (img.dataset.fallback === 'point') {
-                img.onerror = null;
-                return;
-            }
-            if (img.src !== back && !img.src.endsWith('Chkobba_dos.webp')) {
-                img.dataset.fallback = 'back';
-                img.src = back;
-                return;
-            }
-            if (img.src !== point) {
-                img.dataset.fallback = 'point';
-                img.src = point;
-                return;
-            }
-            img.onerror = null;
-        };
-    },
-
-    /**
-     * Returns a valid capture set matching selected table cards, or null.
-     */
-    findMatchingCapture: function(playedCard, tableCards, selectedTableIds) {
-        const ids = Array.isArray(selectedTableIds) ? selectedTableIds : [...selectedTableIds];
-        const selected = tableCards.filter(c => ids.includes(c.id));
-        const captures = this.getValidCaptures(playedCard, tableCards);
-        return captures.find(set =>
-            set.length === selected.length &&
-            set.every(c => selected.some(s => s.id === c.id))
-        ) || null;
-    },
-
-    /**
-     * True if selected table cards are a subset of at least one valid capture.
-     */
-    isSubsetOfSomeCapture: function(playedCard, tableCards, selectedTableIds) {
-        const ids = Array.isArray(selectedTableIds) ? selectedTableIds : [...selectedTableIds];
-        if (ids.length === 0) return true;
-        const selected = tableCards.filter(c => ids.includes(c.id));
-        const captures = this.getValidCaptures(playedCard, tableCards);
-        return captures.some(set => selected.every(s => set.some(c => c.id === s.id)));
+        // Special case: Hearts only has 9 cards in some versions, but here we assume the provided assets.
+        // If an asset is missing, we'll return a generic "point" or back card.
+        return path;
     },
 
     /**
@@ -288,10 +96,10 @@ const ChkobbaLogic = {
     getValidCaptures: function(playedCard, tableCards) {
         const targetValue = playedCard.value;
 
-        // Rule 1: Mandatory identical-value capture — each table card is a separate option (by id).
-        const directMatches = tableCards.filter(c => c.value === targetValue);
-        if (directMatches.length > 0) {
-            return directMatches.map(c => [c]);
+        // Rule 1: Mandatory identical-value capture
+        const directMatch = tableCards.find(c => c.value === targetValue);
+        if (directMatch) {
+            return [[directMatch]]; // MUST take the single matching card
         }
 
         // Rule 2: Sum combinations

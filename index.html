@@ -271,41 +271,27 @@
         </section>
 
         <!-- CHKOBBA SCREEN -->
-        <section id="chkobba-screen" class="screen chkobba-screen" aria-label="شكبّة" hidden aria-hidden="true">
-            <div id="chkobba-deal-layer" class="chkobba-deal-layer" aria-hidden="true"></div>
+        <section id="chkobba-screen" class="screen" aria-label="شكبّة" hidden aria-hidden="true">
+            <div class="chkobba-opponents" id="chkobba-opponents"></div>
 
-            <!-- Chkobba Menu Button -->
-            <div class="chkobba-top-controls">
-                <div id="coup-turn-indicator" class="coup-turn-indicator hidden">
-                    <div id="chkobba-turn-timer" class="chkobba-turn-timer hidden">00:45</div>
-                    <span class="cti-label">الدور على:</span>
-                    <strong id="cti-player-name">...</strong>
-                </div>
-                <button id="chkobba-menu-btn" class="chkobba-menu-btn" type="button">menu</button>
-                <div id="chkobba-menu-dropdown" class="chkobba-menu-dropdown hidden">
-                    <button id="chkobba-voice-toggle-btn" class="chkobba-menu-option">🎙️ تفعيل المايكروفون</button>
-                    <button id="chkobba-back-to-main-btn" class="chkobba-menu-option">🏠 ارجع للقائمة الرئيسية</button>
-                    <button id="chkobba-leave-btn" class="chkobba-menu-option">🚪 اخرج</button>
-                    <button id="chkobba-reconnect-btn" class="chkobba-menu-option">🔄 أعيد الاتصال</button>
+            <div class="chkobba-table" id="chkobba-table">
+                <!-- Cards on table -->
+            </div>
+
+            <div class="chkobba-info" id="chkobba-round-info">
+                <div id="chkobba-deck-count">🂠 40</div>
+                <div id="chkobba-scores-summary"></div>
+            </div>
+
+            <div class="chkobba-hand-wrap" style="width: 100%;">
+                <div class="chkobba-hand" id="chkobba-my-hand">
+                    <!-- Cards in hand -->
                 </div>
             </div>
 
-            <div class="chkobba-stage">
-                <div id="chkobba-opening-panel" class="chkobba-opening-panel" hidden></div>
-
-                <div class="chkobba-table-wrap">
-                    <div id="chkobba-piles" class="chkobba-piles">
-                        <div class="chkobba-pile deck-pile" id="chkobba-deck-pile" aria-label="الكومة"></div>
-                        <div class="chkobba-pile capture-pile" id="chkobba-my-capture-pile" aria-label="الماكول"></div>
-                    </div>
-                    <div class="chkobba-table" id="chkobba-table"></div>
-                </div>
-
-                <div class="chkobba-player-info-box" id="chkobba-player-info"></div>
-            </div>
-
-            <div class="chkobba-hand-dock" aria-live="polite">
-                <div class="chkobba-hand" id="chkobba-my-hand"></div>
+            <div id="chkobba-piles" style="display:flex; gap:20px; margin-bottom:10px;">
+                <div class="deck-pile" id="chkobba-deck-pile"></div>
+                <div class="capture-pile" id="chkobba-my-capture-pile"></div>
             </div>
         </section>
 
@@ -347,6 +333,11 @@
             <button id="password-confirm-btn" class="primary-btn" style="margin-top:20px;">تأكيد</button>
             <button id="password-cancel-btn" class="secondary-btn" style="margin-top:10px; border:none; background:transparent; color:var(--text-muted);">إلغاء</button>
         </div>
+    </div>
+
+    <div id="coup-turn-indicator" class="coup-turn-indicator hidden">
+        <span class="cti-label">الدور على:</span>
+        <strong id="cti-player-name">...</strong>
     </div>
 
     <div id="toast-msg" class="toast"></div>

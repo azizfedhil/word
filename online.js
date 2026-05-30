@@ -157,20 +157,6 @@ function _isThiefRoom(room) { return _getRoomGameMode(room) === 'thief'; }
 function _isSpyfallRoom(room) { return _getRoomGameMode(room) === 'spyfall'; }
 function _isCoupRoom(room) { return _getRoomGameMode(room) === 'coup'; }
 function _isChkobbaRoom(room) { return _getRoomGameMode(room) === 'chkobba'; }
-
-function _chkobbaMinPlayers(room) {
-    const mode = room?.config?.chkobbaMode || '1v1';
-    if (mode === '1v1') return 2;
-    if (mode === '1v1v1') return 3;
-    return 4;
-}
-
-function _lobbyMinPlayers(room) {
-    if (room?.config?.versusAI) return 1;
-    if (_isChkobbaRoom(room)) return _chkobbaMinPlayers(room);
-    if (_isCoupRoom(room)) return 2;
-    return 3;
-}
 const _coupCards = {
     duke: { name:'الشلغمي', icon:'👑', img:'assets/coup/duke.png', img512:'assets/coup/duke512.png', attack:'هجوم: ياخو 3 فلوس من البنك.', defense:'دفاع: يسكّر اعانة +2 متاع أي لاعب.' },
     assassin: { name:'حفار القبور', icon:'🗡️', img:'assets/coup/assassin.png', img512:'assets/coup/assassin512.png', attack:'هجوم: يدفع 3 فلوس ويخلي لاعب يختار كارتة يخسرها.', defense:'دفاع: ما عندوش دفاع، أما claim متاعو ينجم يتكذّب.' },
@@ -612,664 +598,6 @@ function _generateQRCode(code) {
 }
 
 let _chkobbaDragData = null;
-let _chkobbaPointerDrag = null;
-let _chkobbaTableListenersBound = false;
-let _chkobbaCapturePileBound = false;
-let _lastChkobbaAnnounced = null;
-let _chkobbaPlaySession = null;
-let _chkobbaLastSnapshot = null;
-let _chkobbaExpandedInfoPill = null;
-let _chkobbaSkipDealAnim = false;
-let _chkobbaAnimating = false;
-let _chkobbaOpponentPillEls = new Map();
-
-function _bindChkobbaCardImg(img, card) {
-    const logic = window.ChkobbaLogic;
-    if (!logic) return;
-    if (card) logic.bindCardImage(img, card);
-    else {
-        img.src = logic.ASSETS.BACK;
-        logic.bindCardImage(img, null);
-    }
-}
-
-function _resetChkobbaPlaySession() {
-    _chkobbaPlaySession?.stackEl?.remove();
-    _chkobbaPlaySession = null;
-    _chkobbaDragData = null;
-    document.querySelectorAll('.chkobba-card.is-armed, .chkobba-card.is-selected').forEach(el => {
-        el.classList.remove('is-armed', 'is-selected', 'is-invalid');
-    });
-    document.getElementById('chkobba-table')?.classList.remove('is-drop-target');
-    document.getElementById('chkobba-my-capture-pile')?.classList.remove('is-drop-target');
-    document.getElementById('chkobba-capture-ready-bar')?.remove();
-}
-
-function _setupChkobbaMenuButtons() {
-    const menuBtn = document.getElementById('chkobba-menu-btn');
-    const menuDropdown = document.getElementById('chkobba-menu-dropdown');
-    const voiceToggleBtn = document.getElementById('chkobba-voice-toggle-btn');
-    const backToMainBtn = document.getElementById('chkobba-back-to-main-btn');
-    const leaveBtn = document.getElementById('chkobba-leave-btn');
-    const reconnectBtn = document.getElementById('chkobba-reconnect-btn');
-
-    if (!menuBtn || !menuDropdown) return;
-
-    // Remove existing listeners to avoid duplicates
-    const newMenuBtn = menuBtn.cloneNode(true);
-    menuBtn.parentNode.replaceChild(newMenuBtn, menuBtn);
-
-    // Menu button toggle
-    newMenuBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        menuDropdown.classList.toggle('hidden');
-    });
-
-    // Close menu when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!menuDropdown.contains(e.target) && !newMenuBtn.contains(e.target)) {
-            menuDropdown.classList.add('hidden');
-        }
-    });
-
-    // Voice toggle button in dropdown
-    if (voiceToggleBtn) {
-        voiceToggleBtn.addEventListener('click', () => {
-            menuDropdown.classList.add('hidden');
-            if (_voiceOn) {
-                stopVoice();
-                voiceToggleBtn.textContent = '🎙️ تفعيل المايكروفون';
-            } else {
-                if (_room && _room.code) {
-                    initVoice(_room.code);
-                    voiceToggleBtn.textContent = '🔊 إيقاف المايكروفون';
-                } else {
-                    showToast('ما ينجمش تفعيل الصوت في هاد اللعبة');
-                }
-            }
-        });
-
-        // Update voice button state based on current voice status
-        if (_voiceOn) {
-            voiceToggleBtn.textContent = '🔊 إيقاف المايكروفون';
-        }
-    }
-
-    // Back to main menu
-    if (backToMainBtn) {
-        backToMainBtn.addEventListener('click', () => {
-            menuDropdown.classList.add('hidden');
-            if (confirm('متأكد تبي ترجع للقائمة الرئيسية؟')) {
-                _leaveRoom();
-                showScreen('mode-select-screen');
-            }
-        });
-    }
-
-    // Leave room
-    if (leaveBtn) {
-        leaveBtn.addEventListener('click', () => {
-            menuDropdown.classList.add('hidden');
-            if (confirm('متأكد تبي تخرج من الغرفة؟')) {
-                _leaveRoom();
-                showScreen('online-setup-screen');
-            }
-        });
-    }
-
-    // Reconnect
-    if (reconnectBtn) {
-        reconnectBtn.addEventListener('click', () => {
-            menuDropdown.classList.add('hidden');
-            showToast('جاري إعادة الاتصال...');
-            _subscribe(_room.code);
-        });
-    }
-}
-
-function _leaveRoom() {
-    if (_channel) {
-        try { _channel.untrack(); } catch(_) {}
-        _supa.removeChannel(_channel);
-        _channel = null;
-    }
-    if (_voiceOn) stopVoice();
-    _room = null;
-    _isHost = false;
-    window.onlineMode = false;
-    _stopOnlineTimer();
-    _stopVotingTimer();
-    _clearPlayerPatchReconciles();
-}
-
-function _hideChkobbaCaptureReadyBar() {
-    // Removed - no longer showing capture confirmation prompt
-}
-
-function _showChkobbaCaptureReadyBar() {
-    // Removed - auto-confirm capture without prompt
-    _commitChkobbaCapture();
-}
-
-function _prefersReducedMotion() {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
-function _tableCardRotation(index, cardId) {
-    const hash = (cardId || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    return ((index * 17 + hash) % 11) - 5;
-}
-
-function _handCardTilt(index, total) {
-    const mid = (total - 1) / 2;
-    return (index - mid) * 4.5;
-}
-
-/** GPU-friendly card flight; calls onDone when finished (or immediately if reduced motion). */
-function _animateChkobbaFlight({ fromRect, toRect, imgSrc, duration = 600, rotate = 6, withGhost = false, onDone }) {
-    if (_prefersReducedMotion() || !fromRect || !toRect) {
-        onDone?.();
-        return;
-    }
-    const layer = document.getElementById('chkobba-deal-layer');
-    if (!layer) { onDone?.(); return; }
-
-    const flyer = document.createElement('div');
-    flyer.className = 'chkobba-flight-card';
-
-    // Calculate offsets based on top-left anchor
-    const fx = fromRect.left + fromRect.width / 2;
-    const fy = fromRect.top + fromRect.height / 2;
-    const tx = toRect.left + toRect.width / 2;
-    const ty = toRect.top + toRect.height / 2;
-
-    // Start position with opacity 0 for smooth fade-in
-    flyer.style.transform = `translate3d(${fx}px, ${fy}px, 0) scale(1) rotate(${rotate}deg) translate(-50%, -50%)`;
-    flyer.style.opacity = '0';
-    flyer.style.transition = `transform ${duration}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity ${duration * 0.2}ms ease-out`;
-
-    const img = document.createElement('img');
-    img.src = imgSrc;
-    flyer.appendChild(img);
-    layer.appendChild(flyer);
-
-    // Optional Ghost Trail
-    let ghost;
-    if (withGhost) {
-        ghost = document.createElement('div');
-        ghost.className = 'chkobba-ghost-trail';
-        ghost.style.transform = flyer.style.transform;
-        ghost.style.opacity = '0';
-        ghost.style.transition = `transform ${duration}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity ${duration * 0.2}ms ease-out`;
-        const gImg = document.createElement('img');
-        gImg.src = imgSrc;
-        ghost.appendChild(gImg);
-        layer.appendChild(ghost);
-    }
-
-    // Trigger GPU animation with fade-in
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            // Fade in first
-            flyer.style.opacity = '1';
-            
-            // Then animate to target position
-            requestAnimationFrame(() => {
-                const endTransform = `translate3d(${tx}px, ${ty}px, 0) scale(1) rotate(${rotate * 0.35}deg) translate(-50%, -50%)`;
-                flyer.style.transform = endTransform;
-
-                if (ghost) {
-                    // Ghost lags slightly behind visually via timing
-                    setTimeout(() => {
-                        ghost.style.opacity = '0.5';
-                        ghost.style.transform = endTransform;
-                        setTimeout(() => {
-                            ghost.style.opacity = '0';
-                        }, duration * 0.5);
-                    }, 60);
-                }
-            });
-        });
-    });
-
-    const finish = () => {
-        flyer.style.opacity = '0';
-        setTimeout(() => {
-            flyer.remove();
-            if (ghost) setTimeout(() => ghost.remove(), 200);
-            onDone?.();
-        }, 150);
-    };
-    flyer.addEventListener('transitionend', finish, { once: true });
-    // Safety fallback
-    setTimeout(finish, duration + 200);
-}
-
-function _animateChkobbaFlightsSequential(flights, onDone) {
-    if (!flights.length || _prefersReducedMotion()) {
-        onDone?.();
-        return;
-    }
-    let started = 0;
-    let finished = 0;
-    const total = flights.length;
-
-    const startNext = () => {
-        if (started >= total) return;
-        const { staggerAfter, ...flightOpts } = flights[started++];
-
-        _animateChkobbaFlight({
-            ...flightOpts,
-            onDone: () => {
-                finished++;
-                if (finished >= total) onDone?.();
-            }
-        });
-
-        if (started < total) {
-            setTimeout(startNext, staggerAfter || 0);
-        }
-    };
-    startNext();
-}
-
-function _chkobbaHandCardEl(handIndex) {
-    return document.querySelector(`#chkobba-my-hand .hand-card[data-index="${handIndex}"]`)
-        || document.querySelectorAll('#chkobba-my-hand .hand-card')[handIndex];
-}
-
-function _renderChkobbaCard(card, opts = {}) {
-    const { zone = 'table', index = 0, total = 1, interactive = false } = opts;
-    const div = document.createElement('div');
-    div.className = `chkobba-card ${zone === 'hand' ? 'hand-card' : 'table-card'}`;
-    if (zone === 'table') div.classList.add('is-table');
-    div.dataset.cardId = card.id;
-    div.dataset.index = String(index);
-
-    if (zone === 'table') {
-        div.style.setProperty('--rot', `${_tableCardRotation(index, card.id)}deg`);
-        if (interactive) {
-            div.addEventListener('click', (e) => {
-                e.stopPropagation();
-                _onChkobbaTableCardTap(div);
-            });
-        }
-    } else {
-        const tilt = _handCardTilt(index, total);
-        div.style.setProperty('--tilt', `${tilt}deg`);
-        div.style.setProperty('--stack-offset', `${tilt * 0.45}px`);
-        div.style.setProperty('--hand-z', String(10 + index));
-        if (index > 0) div.style.setProperty('--stack-overlap', '20');
-        if (interactive) {
-            div.draggable = true;
-            div.addEventListener('dragstart', _onChkobbaDragStart);
-            div.addEventListener('dragend', _onChkobbaDragEnd);
-            
-            // Double-tap handler
-            let lastTap = 0;
-            div.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const now = Date.now();
-                if (now - lastTap < 300) {
-                    // Double-tap detected
-                    _playCardToTable(div, card, index);
-                    lastTap = 0;
-                } else {
-                    // Single tap - arm the card
-                    _armChkobbaHandCard(div);
-                    lastTap = now;
-                }
-            });
-            
-            div.addEventListener('pointerdown', () => div.classList.add('is-lifted'));
-            div.addEventListener('pointerup', () => div.classList.remove('is-lifted'));
-            div.addEventListener('pointercancel', () => div.classList.remove('is-lifted'));
-            div.addEventListener('pointerleave', () => div.classList.remove('is-lifted'));
-            _bindChkobbaPointerDrag(div);
-        }
-    }
-
-    const img = document.createElement('img');
-    img.alt = '';
-    _bindChkobbaCardImg(img, card);
-    div.appendChild(img);
-    return div;
-}
-
-function _getChkobbaPlayContext() {
-    if (!_room?.word_obj) return null;
-    const state = _room.word_obj;
-    const me = state.players.find(p => p.id === _myId);
-    if (!me || state.players[state.turnIndex].id !== _myId) return null;
-    return { state, me, logic: window.ChkobbaLogic };
-}
-
-function _playCardToTable(cardEl, card, index) {
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx) return;
-    
-    const logic = ctx.logic;
-    const state = ctx.state;
-    const me = ctx.me;
-    
-    // Arm the card first to set up the play session
-    _resetChkobbaPlaySession();
-    
-    const captures = logic.getValidCaptures(card, state.table);
-    
-    if (captures.length > 0) {
-        // If a capture is possible, we must perform it!
-        // We'll automatically pick the first capture set (which prioritizes direct matches if available)
-        _chkobbaPlaySession = {
-            phase: 'readyCapture',
-            handIndex: index,
-            playedCard: card,
-            captureSet: captures[0],
-            selectedTableIds: new Set(captures[0].map(c => c.id))
-        };
-        _commitChkobbaCapture();
-    } else {
-        // No capture possible, play to table
-        _chkobbaPlaySession = {
-            phase: 'armed',
-            handIndex: index,
-            playedCard: card,
-            selectedTableIds: new Set()
-        };
-        _commitChkobbaPlayToTableSkipCaptureCheck();
-    }
-}
-
-async function _commitChkobbaPlayToTableSkipCaptureCheck() {
-    if (_chkobbaAnimating) return;
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx || !_chkobbaPlaySession) return;
-
-    const handIndex = _chkobbaPlaySession.handIndex;
-    const playedCard = _chkobbaPlaySession.playedCard;
-
-    const handEl = _chkobbaHandCardEl(handIndex);
-    const tableEl = document.getElementById('chkobba-table');
-    const imgSrc = ctx.logic.getCardAsset(playedCard);
-
-    const tableRect = tableEl?.getBoundingClientRect();
-    const targetRect = tableRect ? {
-        left: tableRect.left + (tableRect.width / 2),
-        top: tableRect.top + (tableRect.height / 2),
-        width: tableRect.width / 4,
-        height: tableRect.height / 2
-    } : null;
-
-    const runMutate = async () => {
-        await _mutatePlayers(_room.code, (players, room) => {
-            const s = room.word_obj;
-            const p = s.players.find(x => x.id === _myId);
-            if (!p || s.players[s.turnIndex].id !== _myId) return null;
-
-            const card = p.hand.splice(handIndex, 1)[0];
-            s.table.push(card);
-            _advanceChkobbaTurn(s, room);
-            return players;
-        }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
-
-        _resetChkobbaPlaySession();
-    };
-
-    if (_prefersReducedMotion() || !handEl || !tableEl) {
-        await runMutate();
-        return;
-    }
-
-    _chkobbaAnimating = true;
-    if (handEl) handEl.style.opacity = '0';
-    _animateChkobbaFlight({
-        fromRect: handEl.getBoundingClientRect(),
-        toRect: targetRect || tableEl.getBoundingClientRect(),
-        imgSrc,
-        duration: 658.5,
-        onDone: () => {
-            _chkobbaAnimating = false;
-            runMutate();
-        }
-    });
-}
-
-function _armChkobbaHandCard(cardEl) {
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx) return;
-    const handIndex = parseInt(cardEl.dataset.index, 10);
-    if (Number.isNaN(handIndex) || !ctx.me.hand[handIndex]) return;
-
-    _resetChkobbaPlaySession();
-    const playedCard = ctx.me.hand[handIndex];
-    const captures = ctx.logic.getValidCaptures(playedCard, ctx.state.table);
-
-    _chkobbaPlaySession = {
-        phase: captures.length > 0 ? 'selecting' : 'armed',
-        handIndex,
-        playedCard,
-        selectedTableIds: new Set()
-    };
-    _chkobbaDragData = { cardId: cardEl.dataset.cardId, index: String(handIndex) };
-    cardEl.classList.add('is-armed');
-    _refreshChkobbaCaptureHighlights();
-    if (captures.length === 0) {
-        document.getElementById('chkobba-table')?.classList.add('is-drop-target');
-    }
-}
-
-function _onChkobbaTableCardTap(tableCardEl) {
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx || !_chkobbaPlaySession) return;
-
-    const { playedCard, selectedTableIds } = _chkobbaPlaySession;
-    const cardId = tableCardEl.dataset.cardId;
-    const captures = ctx.logic.getValidCaptures(playedCard, ctx.state.table);
-    if (!captures.length) return;
-
-    // Allow editing selection after a full match is ready (no floating stack on body).
-    if (_chkobbaPlaySession.phase === 'readyCapture') {
-        _chkobbaPlaySession.phase = 'selecting';
-        delete _chkobbaPlaySession.captureSet;
-        document.getElementById('chkobba-my-capture-pile')?.classList.remove('is-drop-target');
-        _hideChkobbaCaptureReadyBar();
-    }
-
-    if (selectedTableIds.has(cardId)) {
-        selectedTableIds.delete(cardId);
-    } else {
-        const trial = [...selectedTableIds, cardId];
-        if (!ctx.logic.isSubsetOfSomeCapture(playedCard, ctx.state.table, trial)) {
-            tableCardEl.classList.add('is-invalid');
-            setTimeout(() => tableCardEl.classList.remove('is-invalid'), 400);
-            return;
-        }
-        selectedTableIds.add(cardId);
-    }
-
-    _chkobbaPlaySession.phase = 'selecting';
-    _refreshChkobbaCaptureHighlights();
-
-    const match = ctx.logic.findMatchingCapture(playedCard, ctx.state.table, selectedTableIds);
-    if (match) {
-        _chkobbaPlaySession.phase = 'readyCapture';
-        _chkobbaPlaySession.captureSet = match;
-        document.getElementById('chkobba-my-capture-pile')?.classList.add('is-drop-target');
-        _showChkobbaCaptureReadyBar();
-    }
-}
-
-function _refreshChkobbaCaptureHighlights() {
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx || !_chkobbaPlaySession) return;
-    const { playedCard, selectedTableIds } = _chkobbaPlaySession;
-    const captures = ctx.logic.getValidCaptures(playedCard, ctx.state.table);
-    const candidateIds = new Set();
-    captures.forEach(set => set.forEach(c => candidateIds.add(c.id)));
-
-    document.querySelectorAll('#chkobba-table .table-card').forEach(el => {
-        el.classList.remove('is-selected', 'is-invalid');
-        const id = el.dataset.cardId;
-        if (selectedTableIds.has(id)) el.classList.add('is-selected');
-    });
-}
-
-function _ensureChkobbaTableListeners() {
-    const tableCont = document.getElementById('chkobba-table');
-    if (!tableCont || _chkobbaTableListenersBound) return;
-    _chkobbaTableListenersBound = true;
-    tableCont.addEventListener('dragover', e => {
-        if (!_chkobbaPlaySession) return;
-        e.preventDefault();
-        if (_chkobbaPlaySession.phase === 'armed') tableCont.classList.add('is-drop-target');
-    });
-    tableCont.addEventListener('dragleave', e => {
-        if (!tableCont.contains(e.relatedTarget)) tableCont.classList.remove('is-drop-target');
-    });
-    tableCont.addEventListener('drop', _onChkobbaTableDrop);
-    tableCont.addEventListener('click', (e) => {
-        if (_chkobbaPlaySession?.phase === 'armed' && !e.target.closest('.table-card')) {
-            _commitChkobbaPlayToTable();
-        }
-    });
-
-    const capPile = document.getElementById('chkobba-my-capture-pile');
-    if (capPile && !_chkobbaCapturePileBound) {
-        _chkobbaCapturePileBound = true;
-        capPile.addEventListener('dragover', e => {
-            if (_chkobbaPlaySession?.phase === 'readyCapture') {
-                e.preventDefault();
-                capPile.classList.add('is-drop-target');
-            }
-        });
-        capPile.addEventListener('dragleave', () => capPile.classList.remove('is-drop-target'));
-        capPile.addEventListener('drop', e => {
-            e.preventDefault();
-            _commitChkobbaCapture();
-        });
-        capPile.addEventListener('click', () => {
-            if (_chkobbaPlaySession?.phase === 'readyCapture') _commitChkobbaCapture();
-        });
-    }
-}
-
-function _bindChkobbaPointerDrag(cardEl) {
-    cardEl.addEventListener('pointerdown', (e) => {
-        if (e.pointerType === 'mouse') return;
-        _onChkobbaPointerDown(e);
-    });
-}
-
-function _onChkobbaPointerDown(e) {
-    const cardEl = e.currentTarget;
-    if (!cardEl.classList.contains('hand-card')) return;
-    const rect = cardEl.getBoundingClientRect();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    let moved = false;
-
-    _chkobbaPointerDrag = {
-        cardEl,
-        pointerId: e.pointerId,
-        startX,
-        startY,
-        offsetX: e.clientX - rect.left - rect.width / 2,
-        offsetY: e.clientY - rect.top - rect.height / 2,
-        ghost: null,
-        moved: false
-    };
-
-    const move = (ev) => {
-        if (!_chkobbaPointerDrag) return;
-        const dx = ev.clientX - startX;
-        const dy = ev.clientY - startY;
-        if (!moved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-            moved = true;
-            _chkobbaPointerDrag.moved = true;
-            if (!_chkobbaPlaySession) _armChkobbaHandCard(cardEl);
-            const img = cardEl.querySelector('img');
-            const ghost = document.createElement('div');
-            ghost.className = 'chkobba-drag-ghost';
-            const ghostImg = document.createElement('img');
-            ghostImg.src = img?.src || '';
-            ghost.appendChild(ghostImg);
-            document.body.appendChild(ghost);
-            _chkobbaPointerDrag.ghost = ghost;
-            cardEl.classList.add('is-dragging');
-        }
-        if (moved) _onChkobbaPointerMove(ev);
-    };
-
-    const up = (ev) => {
-        cardEl.removeEventListener('pointermove', move);
-        cardEl.removeEventListener('pointerup', up);
-        cardEl.removeEventListener('pointercancel', up);
-        _onChkobbaPointerUp(ev, moved);
-    };
-
-    cardEl.addEventListener('pointermove', move);
-    cardEl.addEventListener('pointerup', up);
-    cardEl.addEventListener('pointercancel', up);
-    e.preventDefault();
-}
-
-function _onChkobbaPointerMove(e) {
-    if (!_chkobbaPointerDrag || e.pointerId !== _chkobbaPointerDrag.pointerId) return;
-    const { ghost, offsetX, offsetY, moved } = _chkobbaPointerDrag;
-    if (!moved || !ghost) return;
-
-    const tilt = (e.clientX - (ghost._lastX || e.clientX)) * 0.15;
-    ghost._lastX = e.clientX;
-    ghost.style.left = `${e.clientX - offsetX}px`;
-    ghost.style.top = `${e.clientY - offsetY}px`;
-    ghost.style.setProperty('--ghost-tilt', `${Math.max(-12, Math.min(12, tilt))}deg`);
-
-    const cap = document.getElementById('chkobba-my-capture-pile');
-    const under = document.elementFromPoint(e.clientX, e.clientY);
-    if (_chkobbaPlaySession?.phase === 'readyCapture' && cap && (cap === under || cap.contains(under))) {
-        cap.classList.add('is-drop-target');
-    } else {
-        cap?.classList.remove('is-drop-target');
-    }
-
-    if (_chkobbaPlaySession?.phase === 'armed') {
-        const table = document.getElementById('chkobba-table');
-        if (table && (table.contains(under) || under === table)) table.classList.add('is-drop-target');
-        else table?.classList.remove('is-drop-target');
-    }
-}
-
-async function _onChkobbaPointerUp(e, moved) {
-    if (!_chkobbaPointerDrag) return;
-    const { cardEl, ghost, pointerId } = _chkobbaPointerDrag;
-    if (e.pointerId !== pointerId) return;
-
-    ghost?.remove();
-    cardEl.classList.remove('is-dragging');
-    document.getElementById('chkobba-table')?.classList.remove('is-drop-target');
-    document.getElementById('chkobba-my-capture-pile')?.classList.remove('is-drop-target');
-
-    const target = document.elementFromPoint(e.clientX, e.clientY);
-
-    if (!moved) {
-        if (cardEl.classList.contains('hand-card')) _armChkobbaHandCard(cardEl);
-        _chkobbaPointerDrag = null;
-        return;
-    }
-
-    if (_chkobbaPlaySession?.phase === 'readyCapture') {
-        if (target?.closest?.('#chkobba-my-capture-pile')) await _commitChkobbaCapture();
-    } else if (_chkobbaPlaySession?.phase === 'armed') {
-        if (target?.closest?.('#chkobba-table') && !target?.closest?.('.table-card')) {
-            await _commitChkobbaPlayToTable();
-        }
-    } else if (_chkobbaPlaySession?.phase === 'selecting') {
-        const tableCard = target?.closest?.('.table-card');
-        if (tableCard) _onChkobbaTableCardTap(tableCard);
-    }
-
-    _chkobbaPointerDrag = null;
-}
 
 function _renderLobby(room) {
     const cur = document.querySelector('.screen.active');
@@ -1333,7 +661,7 @@ function _renderLobby(room) {
 
     if (_isHost) {
         startBtn.classList.remove('hidden');
-        const minPlayers = _lobbyMinPlayers(room);
+        const minPlayers = _isCoupRoom(room) ? 2 : 3;
         if (n < minPlayers) { startBtn.disabled = true; startBtn.style.opacity = '0.5'; waitMsg.innerText = `⏳ نستنا لاعبين... (${n}/${minPlayers} على الأقل)`; }
         else { startBtn.disabled = false; startBtn.style.opacity = ''; waitMsg.innerText = `✅ ${n} لاعبين — يمكن تبدأ!`; }
         startBtn.innerText = _isChkobbaRoom(room) ? '🚀 ابدا الشكبّة' : _isCoupRoom(room) ? '🚀 ابدا كول وبوّع' : _isThiefRoom(room) ? '🚀 وزّع كوارط سارق حاكم جلاد' : _isSpyfallRoom(room) ? '🚀 وزّع كوارط ماناش هوني' : '🚀 ابدأ اللعبة';
@@ -1342,7 +670,7 @@ function _renderLobby(room) {
             return;
         }
         if (_isCoupRoom(room)) {
-            _renderCoupLobbySettings(startBtn, room);
+            _renderSimpleLobbyTimerSettings(startBtn, room, { key:'actionTimer', label:'⏱️ وقت الدور', fallback:1, max:5 });
             return;
         }
         if (_isThiefRoom(room) || _isSpyfallRoom(room)) {
@@ -1492,44 +820,6 @@ function _renderLobby(room) {
         startBtn.classList.add('hidden');
         waitMsg.innerText = `⏳ نستناو مولى الروم يبدا... (${n} لاعبين)`;
     }
-}
-
-function _renderCoupLobbySettings(anchorBtn, room) {
-    const cfg = room.config || {};
-    const turnTime = cfg.actionTimer || 1;
-    const versusAI = !!cfg.versusAI;
-
-    const wrap = document.createElement('div');
-    wrap.id = 'lobby-settings-panel';
-    wrap.className = 'advanced-content open simple-lobby-settings';
-    wrap.innerHTML = `
-        <div class="surface-card" style="padding:10px 24px;">
-            <div class="setting-row">
-                <div class="setting-info"><span class="setting-title">⏱️ وقت الدور</span></div>
-                <div class="counter-group">
-                    <button class="counter-btn" id="coup-time-minus">−</button>
-                    <span class="counter-value" id="coup-time-val">${turnTime}</span>
-                    <button class="counter-btn" id="coup-time-plus">+</button>
-                </div>
-            </div>
-            <div class="toggle-row" style="border-bottom:none; margin-top:16px;">
-                <span class="toggle-label">🤖 اللعب ضد الذكاء الاصطناعي</span>
-                <div class="toggle-switch ${versusAI?'active':''}" id="coup-ai-tog">
-                    <div class="toggle-thumb"></div>
-                </div>
-            </div>
-        </div>
-    `;
-    anchorBtn.after(wrap);
-
-    const updateConfig = async (patch) => {
-        const newCfg = { ...room.config, ...patch };
-        try { await _update(room.code, { config: newCfg }); } catch(e) { console.error(e); }
-    };
-
-    wrap.querySelector('#coup-time-minus').onclick = () => updateConfig({ actionTimer: Math.max(1, turnTime - 1) });
-    wrap.querySelector('#coup-time-plus').onclick = () => updateConfig({ actionTimer: Math.min(5, turnTime + 1) });
-    wrap.querySelector('#coup-ai-tog').onclick = () => updateConfig({ versusAI: !versusAI });
 }
 
 function _renderSimpleLobbyTimerSettings(anchorBtn, room, opts = {}) {
@@ -1964,20 +1254,8 @@ function _onlineCoupDeck() {
 
 async function _startOnlineCoupGame() {
     if (!_isHost||!_room) return;
-    let allP = [...(_room.players || [])];
-    const cfg = _room.config || {};
-    if (allP.length < 2 && !cfg.versusAI) { showToast('يلزم زوز لاعبين على الأقل.'); return; }
-
-    if (cfg.versusAI && allP.length < 2) {
-        const usedNames = new Set(allP.map(p => p.name));
-        while (allP.length < 2) {
-            let name = _getRandomTunisianName();
-            while (usedNames.has(name)) name = _getRandomTunisianName();
-            usedNames.add(name);
-            allP.push({ id: 'ai_' + Math.random().toString(36).substr(2, 9), name, isAI: true });
-        }
-    }
-
+    const allP = _room.players || [];
+    if (allP.length < 2) { showToast('يلزم زوز لاعبين على الأقل.'); return; }
     const deck = _onlineCoupDeck();
     const actionMinutes = Math.max(1, Math.min(5, parseInt(_room.config?.actionTimer || _pendingConfig?.actionTimer || 1, 10) || 1));
     const state = {
@@ -1992,7 +1270,6 @@ async function _startOnlineCoupGame() {
         players: allP.map(p=>({
             id:p.id,
             name:p.name,
-            isAI: !!p.isAI,
             coins:2,
             hand:[{type:deck.pop(),lost:false},{type:deck.pop(),lost:false}], lastAction: null
         }))
@@ -2776,47 +2053,12 @@ function _startOnlineCoupTimer(state) {
         if (left <= 0 && !state.pending && !state.pendingLoss && !state.pendingExchange && !_onlineCoupTimingOut && _onlineCoupAlive(state).length > 1 && _isHost) {
             _onlineCoupTimeout();
         }
-
-        // AI Logic for active turn
-        if (_isHost && !state.pending && !state.pendingLoss && !state.pendingExchange && !_onlineCoupTimingOut) {
-            const actor = state.players[state.turnIndex];
-            if (actor?.isAI) {
-                const elapsed = (state.actionMinutes * 60) - left;
-                if (elapsed > (2 + Math.random() * 2)) {
-                    _onlineCoupAIAction(state, actor);
-                }
-            }
-        }
     };
-    // Handle AI Loss / AI Exchange
-    if (_isHost && !_onlineCoupTimingOut) {
-        if (state.pendingLoss) {
-            const victim = state.players.find(p => p.id === state.pendingLoss.playerId);
-            if (victim?.isAI) setTimeout(() => _onlineCoupAILoss(state, victim), 1500 + Math.random() * 1500);
-        } else if (state.pendingExchange) {
-            const exchanger = state.players.find(p => p.id === state.pendingExchange.playerId);
-            if (exchanger?.isAI) setTimeout(() => _onlineCoupAIExchange(state, exchanger), 2000 + Math.random() * 2000);
-        }
-    }
-
     tick();
     _onlineCoupTimer = setInterval(tick, 500);
     if (state.pending?.expiresAt) {
         const responseTick = () => {
             _onlineCoupTickResponseCountdown();
-
-            // AI Responses
-            if (_isHost && !_onlineCoupTimingOut && state.pending) {
-                const responders = _onlineCoupPendingResponders(state, state.pending);
-                const aiResponders = responders.filter(p => p.isAI && !state.pending.passes.includes(p.id));
-                if (aiResponders.length > 0) {
-                    const elapsed = (ONLINE_COUP_RESPONSE_SECONDS) - Math.max(0, Math.ceil((state.pending.expiresAt - _syncedNow()) / 1000));
-                    if (elapsed > (1.5 + Math.random() * 2)) {
-                        _onlineCoupAIResponse(state, aiResponders[0]);
-                    }
-                }
-            }
-
             if (_syncedNow() < state.pending.expiresAt || _onlineCoupTimingOut) return;
             if (_isHost) _onlineCoupPendingTimeout();
         };
@@ -2848,12 +2090,10 @@ async function _onlineCoupPendingTimeout() {
 
 async function _onlineCoupTimeout() {
     if (!_room?.word_obj || _onlineCoupTimingOut) return;
-    const actor = _room.word_obj.players[_room.word_obj.turnIndex];
-    const isAI = actor?.isAI;
     _onlineCoupTimingOut = true;
     try {
         await _onlineCoupMutateState(async state => {
-            if (!isAI && (state.pending || state.pendingLoss || state.pendingExchange || Math.ceil(((state.turnEndsAt || _syncedNow()) - _syncedNow()) / 1000) > 0)) return null;
+            if (state.pending || state.pendingLoss || state.pendingExchange || Math.ceil(((state.turnEndsAt || _syncedNow()) - _syncedNow()) / 1000) > 0) return null;
             const actor = state.players[state.turnIndex || 0];
             if (actor?.hand?.some(c=>!c.lost)) {
                 actor.coins += 1;
@@ -3649,157 +2889,6 @@ function _onlineCoupWrong() {
     return ['عمل روحو حاكم وطلع غلط.','تكذب؟ لا يا خويا، إنت الي تخلص.','دخل في حيط بيديه.'][Math.floor(Math.random()*3)];
 }
 
-async function _onlineCoupAIStartPending(action, aiId, targetId) {
-    await _onlineCoupMutateState(async state => {
-        if (state.pending || state.pendingLoss || state.pendingExchange) return null;
-        const actor = state.players[state.turnIndex || 0];
-        if (!actor || actor.id !== aiId || !_onlineCoupLiveCards(actor).length) return null;
-        if ((actor.coins || 0) >= 10 && action !== 'coup') return null;
-        if (action === 'assassinate' && actor.coins < 3) return null;
-        if (action === 'coup' && actor.coins < 7) return null;
-        if (['assassinate', 'coup', 'steal'].includes(action)) {
-            const target = _onlineCoupAlive(state).find(p => p.id === targetId && p.id !== actor.id);
-            if (!target) return null;
-        }
-        const claims = { tax: 'duke', assassinate: 'assassin', exchange: 'ambassador', steal: 'captain' };
-        const blockRoles = action === 'foreignAid' ? ['duke'] : action === 'assassinate' ? ['contessa'] : action === 'steal' ? ['captain', 'ambassador'] : [];
-        const blockable = blockRoles.length > 0;
-        const claim = claims[action] || null;
-        if (!claim && !blockable) return _onlineCoupApplyActionLocal(state, action, targetId);
-        if (action === 'assassinate') {
-            actor.coins -= 3;
-            _onlineCoupPayBank(state, 3);
-        }
-        state.pending = { id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, action, actorId: actor.id, targetId, claim, blockable, blockRoles, passes: [] };
-        _onlineCoupSetResponseDeadline(state.pending);
-        state.log = `${actor.name} قال يعمل ${_onlineCoupActionName(action)}. قولولو "تكذب!" كان شاكين.`;
-        _onlineCoupEvent(state, `${actor.name} عمل ${_onlineCoupActionName(action)}`, 'notice');
-        return state;
-    });
-}
-
-async function _onlineCoupAIAction(state, ai) {
-    if (!ai || ai.hand.every(c => c.lost)) return;
-    if (_onlineCoupTimingOut) return;
-    _onlineCoupTimingOut = true;
-    try {
-        const aliveOpponents = state.players.filter(p => p.id !== ai.id && p.hand.some(c => !c.lost));
-        if (!aliveOpponents.length) return;
-        const randomOpponent = aliveOpponents[Math.floor(Math.random() * aliveOpponents.length)];
-
-        if (ai.coins >= 10) {
-            await _onlineCoupAIStartPending('coup', ai.id, randomOpponent.id);
-            return;
-        }
-
-        const possible = ['income', 'foreignAid', 'tax', 'exchange'];
-        if (ai.coins >= 3) possible.push('assassinate');
-        if (aliveOpponents.some(p => p.coins > 0)) possible.push('steal');
-        if (ai.coins >= 7) possible.push('coup');
-
-        const weights = { income: 10, foreignAid: 15, tax: 25, steal: 20, assassinate: 15, exchange: 5, coup: 10 };
-        const pool = [];
-        possible.forEach(act => { for (let i = 0; i < (weights[act] || 10); i++) pool.push(act); });
-        const action = pool[Math.floor(Math.random() * pool.length)];
-
-        if (['coup', 'assassinate', 'steal'].includes(action)) {
-            let targetId = randomOpponent.id;
-            if (action === 'steal') {
-                const hasMoney = aliveOpponents.filter(p => p.coins > 0);
-                if (hasMoney.length) targetId = hasMoney[Math.floor(Math.random() * hasMoney.length)].id;
-            }
-            await _onlineCoupAIStartPending(action, ai.id, targetId);
-        } else {
-            await _onlineCoupMutateState(async state => {
-                if (state.pending || state.pendingLoss || state.pendingExchange) return null;
-                const actor = state.players[state.turnIndex || 0];
-                if (!actor || actor.id !== ai.id) return null;
-                return _onlineCoupApplyActionLocal(state, action, null);
-            });
-        }
-    } finally {
-        _onlineCoupTimingOut = false;
-    }
-}
-
-async function _onlineCoupAIResponse(state, ai) {
-    const p = state.pending;
-    if (!p || p.passes.includes(ai.id)) return;
-
-    const roll = Math.random();
-    const isTarget = p.targetId === ai.id;
-    const canBlock = !p.stage || p.stage === 'action';
-
-    if (p.stage === 'action') {
-        // Target can block with an appropriate role
-        if (isTarget && p.blockRoles?.length && roll < 0.3) {
-            await _onlineCoupBlock(ai.id, p.blockRoles[0], p.id);
-        // Any player can block foreignAid with duke
-        } else if (canBlock && p.action === 'foreignAid' && !isTarget && roll < 0.15) {
-            await _onlineCoupBlock(ai.id, 'duke', p.id);
-        // Challenge the claim (not on income/foreignAid/coup which have no claim)
-        } else if (roll < 0.1 && p.claim && p.action !== 'income' && p.action !== 'foreignAid' && p.action !== 'coup') {
-            await _onlineCoupChallenge(ai.id, p.id);
-        } else {
-            await _onlineCoupPass(ai.id, p.id);
-        }
-    } else if (p.stage === 'block') {
-        if (roll < 0.15) {
-            await _onlineCoupChallengeBlock(ai.id, p.id);
-        } else {
-            await _onlineCoupPass(ai.id, p.id);
-        }
-    }
-}
-
-async function _onlineCoupAILoss(state, ai) {
-    const p = state.pendingLoss;
-    if (!p || p.playerId !== ai.id) return;
-    const live = ai.hand.map((c, i) => ({ c, i })).filter(x => !x.c.lost);
-    if (!live.length) return;
-    const chosenIndex = live[Math.floor(Math.random() * live.length)].i;
-    const lossId = p.id;
-    // AI bypasses the _myId guard by running its own mutation
-    await _onlineCoupMutateState(async state => {
-        const loss = state.pendingLoss;
-        if (!loss || loss.playerId !== ai.id) return null;
-        if (lossId && loss.id !== lossId) return null;
-        if (!_onlineCoupMarkLoss(state, loss.playerId, chosenIndex)) return null;
-        const next = loss.next || { type: 'nextTurn' };
-        _onlineCoupContinueAfterLoss(state, next);
-        return state;
-    });
-}
-
-async function _onlineCoupAIExchange(state, ai) {
-    const p = state.pendingExchange;
-    if (!p || p.playerId !== ai.id) return;
-    const exchangeId = p.id;
-    // Pick the first `keep` cards from the pool (AI bypasses _myId guard)
-    const finalIndices = Array.from({ length: p.keep }, (_, i) => i);
-    await _onlineCoupMutateState(async state => {
-        const exchange = state.pendingExchange;
-        if (!exchange || exchange.playerId !== ai.id) return null;
-        if (exchangeId && exchange.id !== exchangeId) return null;
-        const chosen = finalIndices;
-        if (chosen.length !== exchange.keep) return null;
-        const player = state.players.find(pl => pl.id === exchange.playerId);
-        if (!player) return null;
-        const liveSlots = player.hand.map((card, index) => ({ card, index })).filter(x => !x.card.lost);
-        const chosenSet = new Set(chosen);
-        const kept = chosen.map(idx => exchange.pool[idx]).filter(Boolean);
-        if (kept.length !== exchange.keep) return null;
-        liveSlots.forEach((slot, idx) => { slot.card.type = kept[idx].type; slot.card.lost = false; });
-        exchange.pool.filter((_, idx) => !chosenSet.has(idx)).forEach(item => state.deck.unshift(item.type));
-        state.deck.sort(() => 0.5 - Math.random());
-        state.pendingExchange = null;
-        state.log = `${player.name} بدّل كوارطو مع الدكّة.`;
-        _onlineCoupEvent(state, state.log, 'good');
-        _onlineCoupNextTurn(state);
-        return state;
-    });
-}
-
 async function _disconnectForReconnect() {
     document.getElementById('coup-turn-indicator')?.classList.add('hidden');
     if (!_room) { window.onlineMode = false; showScreen('online-setup-screen'); return; }
@@ -3919,46 +3008,9 @@ async function _stopScanner() {
     if (btn) btn.innerText = '📷 امسح الكود';
 }
 
-function _initChkobbaReactions() {
-    const chkobbaReactBar = document.getElementById('chkobba-reactions');
-    const dock = document.querySelector('.chkobba-hand-dock');
-    if (chkobbaReactBar && dock) {
-        // Show bar when clicking hand dock background
-        dock.addEventListener('click', (e) => {
-            if(e.target.closest('.chkobba-card')) return;
-            chkobbaReactBar.classList.add('show');
-
-            // Auto hide after 3 seconds
-            clearTimeout(chkobbaReactBar._hideTimer);
-            chkobbaReactBar._hideTimer = setTimeout(() => {
-                chkobbaReactBar.classList.remove('show');
-            }, 3000);
-        });
-
-        chkobbaReactBar.querySelectorAll('button').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (typeof _sfx !== 'undefined') _sfx.tap();
-                chkobbaReactBar.classList.remove('show');
-
-                // Broadcast reaction
-                if (_channel) {
-                    _channel.send({
-                        type: 'broadcast',
-                        event: 'reaction',
-                        payload: { name: _myName, msg: btn.innerText, sfx: 'notify' }
-                    });
-                    _showReactionFloat(_myName + ': ' + btn.innerText);
-                }
-            });
-        });
-    }
-}
-
 document.addEventListener('DOMContentLoaded', () => {
     const scanBtn = document.getElementById('open-scanner-btn');
     if (scanBtn) scanBtn.addEventListener('click', _startScanner);
-    _initChkobbaReactions();
 });
 
 // Expose for verification/debugging
@@ -3975,8 +3027,6 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
     const mode = cfg.chkobbaMode || '1v1';
     const target = cfg.chkobbaTarget || 21;
     const tournament = !!cfg.chkobbaTournament;
-    const versusAI = !!cfg.versusAI;
-    const turnTime = cfg.chkobbaTurnTime || 45;
 
     // Mode names map
     const modeLabels = {
@@ -3988,7 +3038,7 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
 
     const wrap = document.createElement('div');
     wrap.id = 'lobby-settings-panel';
-    wrap.className = 'advanced-content open simple-lobby-settings chkobba-lobby-settings';
+    wrap.className = 'advanced-content open simple-lobby-settings';
 
     wrap.innerHTML = `
         <div class="surface-card" style="padding:10px 24px;">
@@ -4023,27 +3073,9 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
                 </div>
             </div>
 
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-title">⏱️ وقت الدور (ثانية)</span>
-                </div>
-                <div class="counter-group">
-                    <button class="counter-btn" id="chk-time-minus">−</button>
-                    <span class="counter-value" id="chk-time-val">${turnTime}</span>
-                    <button class="counter-btn" id="chk-time-plus">+</button>
-                </div>
-            </div>
-
-            <div class="toggle-row" style="margin-top:16px;">
+            <div class="toggle-row" style="border-bottom:none; margin-top:16px;">
                 <span class="toggle-label">🏆 نظام تورنوا</span>
                 <div class="toggle-switch ${tournament?'active':''}" id="chk-tournament-tog">
-                    <div class="toggle-thumb"></div>
-                </div>
-            </div>
-
-            <div class="toggle-row" style="border-bottom:none;">
-                <span class="toggle-label">🤖 اللعب ضد الذكاء الاصطناعي</span>
-                <div class="toggle-switch ${versusAI?'active':''}" id="chk-ai-tog">
                     <div class="toggle-thumb"></div>
                 </div>
             </div>
@@ -4060,478 +3092,80 @@ function _renderChkobbaLobbySettings(anchorBtn, room) {
     const dropdown = wrap.querySelector('#chk-mode-dropdown');
     dropdown.querySelector('.dropdown-trigger').onclick = () => dropdown.classList.toggle('open');
     dropdown.querySelectorAll('.dropdown-option').forEach(opt => {
-        opt.onclick = async () => {
+        opt.onclick = () => {
             dropdown.classList.remove('open');
-            const modeVal = opt.dataset.value;
-            await updateConfig({ chkobbaMode: modeVal });
-            if (_room) {
-                _room.config = { ...(_room.config || {}), chkobbaMode: modeVal };
-                _renderLobby(_room);
-            }
+            updateConfig({ chkobbaMode: opt.dataset.value });
         };
     });
 
     wrap.querySelector('#chk-target-minus').onclick = () => updateConfig({ chkobbaTarget: Math.max(11, target - 10) });
     wrap.querySelector('#chk-target-plus').onclick = () => updateConfig({ chkobbaTarget: Math.min(101, target + 10) });
 
-    wrap.querySelector('#chk-time-minus').onclick = () => updateConfig({ chkobbaTurnTime: Math.max(15, turnTime - 15) });
-    wrap.querySelector('#chk-time-plus').onclick = () => updateConfig({ chkobbaTurnTime: Math.min(120, turnTime + 15) });
-
     wrap.querySelector('#chk-tournament-tog').onclick = () => {
         updateConfig({ chkobbaTournament: !tournament });
     };
-
-    wrap.querySelector('#chk-ai-tog').onclick = () => {
-        updateConfig({ versusAI: !versusAI });
-    };
 }
-
-const _TUNISIAN_NAMES = ["حمادي", "فوزية", "بلقاسم", "منجي", "نجاة", "مبروكة", "الصادق", "بشيرة", "عياشي", "زهيرة", "فرحات", "لطيفة", "توفيق", "منيرة", "الشاذلي", "عزيزة"];
-function _getRandomTunisianName() { return _TUNISIAN_NAMES[Math.floor(Math.random() * _TUNISIAN_NAMES.length)]; }
 
 async function _startOnlineChkobbaGame() {
     if (!_isHost || !_room) return;
-    let allP = [...(_room.players || [])];
+    const allP = _room.players || [];
     const cfg = _room.config || {};
     const mode = cfg.chkobbaMode || '1v1';
-    const turnTime = cfg.chkobbaTurnTime || 45;
 
     // Validate player count for mode
     const needed = mode === '1v1' ? 2 : mode === '1v1v1' ? 3 : 4;
-    if (allP.length < needed && !cfg.chkobbaTournament && !cfg.versusAI) {
+    if (allP.length < needed && !cfg.chkobbaTournament) {
         showToast(`يلزم ${needed} لاعبين للمود هذا.`);
         return;
     }
 
-    if (cfg.versusAI && allP.length < needed) {
-        const usedNames = new Set(allP.map(p => p.name));
-        while (allP.length < needed) {
-            let name = _getRandomTunisianName();
-            while (usedNames.has(name)) name = _getRandomTunisianName();
-            usedNames.add(name);
-            allP.push({ id: 'ai_' + Math.random().toString(36).substr(2, 9), name, isAI: true });
-        }
-    }
-
     const logic = window.ChkobbaLogic;
+    const deck = logic.createDeck();
 
+    const table = [deck.pop(), deck.pop(), deck.pop(), deck.pop()];
+
+    // Team assignment for 2v2
     let teams = null;
     if (mode === '2v2') {
-        teams = [[allP[0].id, allP[2].id], [allP[1].id, allP[3].id]];
+        teams = [[allP[0].id, allP[2].id], [allP[1].id, allP[3].id]]; // 1&3 vs 2&4
     }
 
-    const state = logic.createNewGameState(
-        allP.map((p, idx) => ({
+    // State initialization
+    const state = {
+        deck,
+        table,
+        players: allP.map((p, idx) => ({
             id: p.id,
             name: p.name,
-            isAI: !!p.isAI,
-            team: mode === '2v2' ? (idx % 2 === 0 ? 0 : 1) : null
+            team: mode === '2v2' ? (idx % 2 === 0 ? 0 : 1) : null,
+            hand: [],
+            captured: [],
+            chkobbas: 0,
+            totalScore: 0
         })),
-        {
-            teams,
-            targetScore: cfg.chkobbaTarget || 21,
-            mode,
-            tournament: !!cfg.chkobbaTournament
-        }
-    );
+        teams,
+        turnIndex: 0,
+        lastCaptureId: null,
+        round: 1,
+        phase: 'playing',
+        targetScore: cfg.chkobbaTarget || 21,
+        mode: mode,
+        tournament: !!cfg.chkobbaTournament,
+        log: 'بدا الطرح، بالتوفيق!'
+    };
+
+    // Deal first hand
+    state.players.forEach(p => {
+        p.hand = [state.deck.pop(), state.deck.pop(), state.deck.pop()];
+    });
 
     try {
-        const timerEndAt = new Date(_syncedNow() + turnTime * 1000).toISOString();
         await _update(_room.code, {
             state: 'chkobba',
-            timer_end_at: timerEndAt,
             word_obj: state,
             config: { ...cfg, gameMode: 'chkobba' }
         });
     } catch(e) { console.error(e); }
-}
-
-function _renderChkobbaPiles(state, me) {
-    const deckEl = document.getElementById('chkobba-deck-pile');
-    const capEl = document.getElementById('chkobba-my-capture-pile');
-    if (!deckEl || !capEl) return;
-
-    deckEl.style.backgroundImage = "url('cardpile-right.webp')";
-    let deckBadge = deckEl.querySelector('.pile-count');
-    if (!deckBadge) {
-        deckBadge = document.createElement('span');
-        deckBadge.className = 'pile-count';
-        deckEl.appendChild(deckBadge);
-    }
-    deckBadge.textContent = state.deck.length;
-
-    const capCount = me?.captured?.length || 0;
-    capEl.classList.toggle('has-cards', capCount > 0);
-    capEl.style.backgroundImage = "url('cardpile-left.webp')";
-    capEl.style.backgroundSize = 'cover';
-    let capBadge = capEl.querySelector('.pile-count');
-    if (!capBadge) {
-        capBadge = document.createElement('span');
-        capBadge.className = 'pile-count';
-        capEl.appendChild(capBadge);
-    }
-    capBadge.textContent = capCount;
-}
-
-function _renderChkobbaPlayerInfo(state, me, isMyTurn) {
-    const infoBox = document.getElementById('chkobba-player-info');
-    if (!infoBox || !me) return;
-
-    const capturedCount = me.captured?.length || 0;
-    const diamondCount = me.captured?.filter(c => c.suit === 'diamonds').length || 0;
-    const chkobbaCount = me.chkobbas || 0;
-    const firstLetter = me.name ? me.name.charAt(0).toUpperCase() : '?';
-
-    const details = `
-        <div class="chkobba-stat-item">
-            <span class="chkobba-stat-value">${capturedCount}🃏</span>
-            <span class="chkobba-stat-label">الماكول</span>
-        </div>
-        <div class="chkobba-stat-separator"></div>
-        <div class="chkobba-stat-item">
-            <span class="chkobba-stat-value">${diamondCount}♦️</span>
-            <span class="chkobba-stat-label">ديناري</span>
-        </div>
-        <div class="chkobba-stat-separator"></div>
-        <div class="chkobba-stat-item">
-            <span class="chkobba-stat-value">${chkobbaCount}⭐</span>
-            <span class="chkobba-stat-label">شكبة</span>
-        </div>
-    `;
-
-    infoBox.innerHTML = `
-        <div class="chkobba-player-info-content">
-            <span class="chkobba-player-name">${me.name}</span>
-            <div class="chkobba-player-details">${details}</div>
-        </div>
-        <div class="chkobba-player-circle ${isMyTurn ? 'is-turn' : ''}">${firstLetter}</div>
-    `;
-}
-
-function _renderChkobbaOpening(room, state) {
-    const panel = document.getElementById('chkobba-opening-panel');
-    const tableWrap = document.querySelector('.chkobba-table-wrap');
-    const handDock = document.querySelector('.chkobba-hand-dock');
-    if (!panel) return;
-
-    const logic = window.ChkobbaLogic;
-    const inSetup = logic.isSetupPhase(state);
-    panel.hidden = !inSetup;
-    tableWrap?.classList.toggle('is-setup-locked', inSetup);
-    handDock?.classList.toggle('is-setup-locked', inSetup);
-
-    if (!inSetup) {
-        panel.innerHTML = '';
-        return;
-    }
-
-    const dealer = logic.getDealer(state);
-    const cutter = logic.getCutter(state);
-    const amCutter = cutter?.id === _myId;
-    const amDealer = dealer?.id === _myId;
-    const sp = state.setupPhase;
-
-    if (sp === logic.SETUP_PHASES.SHUFFLED) {
-        panel.innerHTML = `
-            <h3>🂠 بداية الطرح</h3>
-            <p>الكومة مخلوطة. <strong>${_esc(dealer?.name || '')}</strong> التاجر، <strong>${_esc(cutter?.name || '')}</strong> يقصّ.</p>
-            ${amCutter ? '<button type="button" class="primary-btn" id="chkobba-cut-btn">✂️ قصّ الكومة</button>' : `<p>⏳ نستنا <strong>${_esc(cutter?.name || '')}</strong> يقصّ...</p>`}
-        `;
-    } else if (sp === logic.SETUP_PHASES.REVEALED && state.starterCard) {
-        panel.innerHTML = `
-            <h3>🃏 الكارطة الأولى</h3>
-            <p>${amCutter ? 'شوف الكارطة — قبلها ولا ارميها على الطاولة.' : `⏳ <strong>${_esc(cutter?.name || '')}</strong> يقرر...`}</p>
-            <div class="chkobba-opening-starter" id="chkobba-starter-slot"></div>
-            ${amCutter ? `
-                <div class="chkobba-opening-actions">
-                    <button type="button" class="primary-btn" id="chkobba-accept-starter-btn">✅ قبل الكارطة</button>
-                    <button type="button" class="secondary-btn" id="chkobba-decline-starter-btn">🃏 ارميها على الطاولة</button>
-                </div>
-            ` : ''}
-            ${amDealer && !amCutter ? '<p>إذا قبلها، التاجر يعطيه كارتين زيادة. وإلا تبقى على الطاولة.</p>' : ''}
-        `;
-        const displayCard = amCutter ? state.starterCard : { id: 'hidden', suit: 'back', value: 0 };
-        panel.querySelector('#chkobba-starter-slot')?.appendChild(
-            _renderChkobbaCard(displayCard, { zone: 'table', index: 0, interactive: false })
-        );
-    } else {
-        panel.innerHTML = `<h3>⏳ تحضير الطرح</h3><p>${_esc(state.log || '')}</p>`;
-    }
-
-    panel.querySelector('#chkobba-cut-btn')?.addEventListener('click', () => _chkobbaPerformCut());
-    panel.querySelector('#chkobba-accept-starter-btn')?.addEventListener('click', () => _chkobbaAcceptStarter());
-    panel.querySelector('#chkobba-decline-starter-btn')?.addEventListener('click', () => _chkobbaDeclineStarter());
-}
-
-async function _chkobbaDeclineStarter() {
-    if (!_room?.word_obj) return;
-    const logic = window.ChkobbaLogic;
-    const state = _room.word_obj;
-    if (state.players[state.cutterIndex]?.id !== _myId) return;
-
-    const starterSlot = document.getElementById('chkobba-starter-slot');
-    const tableEl = document.getElementById('chkobba-table');
-    const cardImg = state.starterCard && logic.getCardAsset(state.starterCard);
-
-    const runMutate = async () => {
-        await _mutatePlayers(_room.code, (players, room) => {
-            const s = room.word_obj;
-            if (!logic.declineStarterCard(s)) return null;
-            return players;
-        }, null, (room, players) => ({ word_obj: room.word_obj }));
-        _chkobbaLastSnapshot = null;
-    };
-
-    if (_prefersReducedMotion() || !starterSlot || !tableEl || !cardImg) {
-        await runMutate();
-        return;
-    }
-
-    _chkobbaAnimating = true;
-    const fromRect = starterSlot.getBoundingClientRect();
-    const toRect = tableEl.getBoundingClientRect();
-    _animateChkobbaFlight({
-        fromRect,
-        toRect,
-        imgSrc: cardImg,
-        rotate: -8,
-        onDone: async () => {
-            _chkobbaAnimating = false;
-            await runMutate();
-        }
-    });
-}
-
-async function _chkobbaPerformCutAI() {
-    if (!_room?.word_obj) return;
-    const logic = window.ChkobbaLogic;
-    const s = _room.word_obj;
-    const cutIndex = 5 + Math.floor(Math.random() * Math.max(1, s.deck.length - 10));
-    await _mutatePlayers(_room.code, (players, room) => {
-        if (!logic.performDeckCut(room.word_obj, cutIndex)) return null;
-        return players;
-    }, null, (room) => ({ word_obj: room.word_obj }));
-}
-
-async function _chkobbaAcceptStarterAI() {
-    if (!_room?.word_obj) return;
-    const logic = window.ChkobbaLogic;
-    await _mutatePlayers(_room.code, (players, room) => {
-        if (!logic.acceptStarterCard(room.word_obj)) return null;
-        return players;
-    }, null, (room) => ({ word_obj: room.word_obj }));
-}
-
-async function _chkobbaDeclineStarterAI() {
-    if (!_room?.word_obj) return;
-    const logic = window.ChkobbaLogic;
-    await _mutatePlayers(_room.code, (players, room) => {
-        if (!logic.declineStarterCard(room.word_obj)) return null;
-        return players;
-    }, null, (room) => ({ word_obj: room.word_obj }));
-}
-
-async function _chkobbaPerformCut() {
-    if (!_room?.word_obj) return;
-    const logic = window.ChkobbaLogic;
-    const state = _room.word_obj;
-    if (state.players[state.cutterIndex]?.id !== _myId) return;
-
-    const cutIndex = 5 + Math.floor(Math.random() * Math.max(1, state.deck.length - 10));
-
-    await _mutatePlayers(_room.code, (players, room) => {
-        const s = room.word_obj;
-        if (!logic.performDeckCut(s, cutIndex)) return null;
-        return players;
-    }, null, (room, players) => ({ word_obj: room.word_obj }));
-}
-
-async function _chkobbaAcceptStarter() {
-    if (!_room?.word_obj) return;
-    const logic = window.ChkobbaLogic;
-
-    await _mutatePlayers(_room.code, (players, room) => {
-        const s = room.word_obj;
-        if (!logic.acceptStarterCard(s)) return null;
-        return players;
-    }, null, (room, players) => ({ word_obj: room.word_obj }));
-
-    _chkobbaLastSnapshot = null;
-}
-
-function _buildChkobbaOpponentPillHtml(p, state, { active, isTeammate, isExpanded, offline, dinari }) {
-    const isMe = p.id === _myId;
-    return `
-        <div class="pill-main">
-            <div class="pill-name">${_esc(p.name)}${isMe ? ' <span class="you-tag">أنا</span>' : ''}${active ? ' ●' : ''}</div>
-            <div class="pill-stats-row">
-                <div class="pill-stat" title="كوارط في اليد">🃏 ${p.hand.length}</div>
-                <div class="pill-stat" title="الماكول">📥 ${p.captured?.length || 0}</div>
-                <div class="pill-stat" title="السكور">🏆 ${p.totalScore}</div>
-            </div>
-            <div class="pill-chevron">${isExpanded ? '▲' : '▼'}</div>
-        </div>
-        ${isExpanded ? `
-            <div class="pill-details">
-                <div class="pill-details-grid">
-                    <div class="detail-row"><span>الشكبّات</span><strong>${p.chkobbas || 0}</strong></div>
-                    <div class="detail-row"><span>الماكول</span><strong>${p.captured?.length || 0}</strong></div>
-                    <div class="detail-row"><span>الديناري</span><strong>${dinari}</strong></div>
-                    ${offline ? '<div class="detail-row"><span>الاتصال</span><strong>غير متصل</strong></div>' : ''}
-                    <div class="detail-row"><span>الطرح</span><strong>${state.round || 1}</strong></div>
-                </div>
-            </div>
-        ` : ''}
-    `;
-}
-
-function _renderChkobbaOpponentPills(room, state, me, mode, roomPlayerMeta) {
-    const oppCont = document.getElementById('chkobba-opponents');
-    if (!oppCont) return;
-
-    oppCont.className = `chkobba-opponents mode-${mode}`;
-    const playersToRender = state.players; // Render all players including me
-    const playerIds = new Set(playersToRender.map(p => p.id));
-
-    for (const [id, el] of _chkobbaOpponentPillEls) {
-        if (!playerIds.has(id)) {
-            el.remove();
-            _chkobbaOpponentPillEls.delete(id);
-        }
-    }
-
-    playersToRender.forEach(p => {
-        const isMe = p.id === _myId;
-        const active = state.players[state.turnIndex].id === p.id;
-        const isTeammate = mode === '2v2' && p.team === me?.team;
-        const isExpanded = _onlineCoupSummaryExpandedId === p.id;
-        const meta = roomPlayerMeta[p.id];
-        const offline = !isMe && meta && meta.connected === false;
-        const dinari = p.captured?.filter(c => c.suit === 'diamonds').length || 0;
-
-        let pill = _chkobbaOpponentPillEls.get(p.id);
-        const isNew = !pill;
-
-        if (!pill) {
-            pill = document.createElement('div');
-            pill.dataset.playerId = p.id;
-            pill.className = 'chkobba-player-pill is-entering';
-            pill.addEventListener('animationend', (e) => {
-                if (e.animationName === 'chkobbaPillDropIn') pill.classList.remove('is-entering');
-            });
-            _chkobbaOpponentPillEls.set(p.id, pill);
-            oppCont.appendChild(pill);
-        }
-
-        pill.dataset.expanded = String(isExpanded);
-        pill.className = `chkobba-player-pill ${active ? 'is-turn' : ''} ${isMe ? 'is-me' : ''} ${isTeammate ? 'is-teammate' : ''} ${isExpanded ? 'is-expanded' : ''} ${offline ? 'is-offline' : ''}${isNew ? ' is-entering' : ''}`;
-
-        pill.innerHTML = _buildChkobbaOpponentPillHtml(p, state, { active, isTeammate, isExpanded, offline, dinari });
-
-        pill.onclick = () => {
-            _onlineCoupSummaryExpandedId = isExpanded ? null : p.id;
-            _showOnlineChkobba(room);
-        };
-    });
-
-    // Maintain order
-    playersToRender.forEach(p => {
-        const el = _chkobbaOpponentPillEls.get(p.id);
-        if (el) oppCont.appendChild(el);
-    });
-}
-
-function _maybeShowChkobbaAnnouncement(state) {
-    if (!state?.chkobbaEvent) return;
-    const key = `${state.chkobbaEvent.playerId}-${state.round}-${state.chkobbaEvent.type}`;
-    if (_lastChkobbaAnnounced === key) return;
-    _lastChkobbaAnnounced = key;
-    _handleChkobbaBroadcastEvent(state.chkobbaEvent);
-}
-
-function _renderChkobbaInfoPills(state, me) {
-    const trans = (typeof i18n !== 'undefined' && i18n[currentLang]) ? i18n[currentLang] : (i18n?.tn || {});
-    const pills = [
-        { key: 'deck', icon: '🂠', label: 'كومة', value: state.deck.length, hint: trans.chkobba_deck || 'كوارط مازالت في الكومة' },
-        { key: 'score', icon: '🏆', label: 'سكور', value: me?.totalScore || 0, hint: trans.chkobba_scores || 'السكور' },
-        { key: 'round', icon: '🔁', label: 'طرح', value: state.round || 1, hint: trans.chkobba_round || 'رقم الطرح الحالي' }
-    ];
-    const infoCont = document.getElementById('chkobba-round-info');
-    if (!infoCont) return;
-    infoCont.innerHTML = '';
-    pills.forEach(p => {
-        const el = document.createElement('button');
-        el.type = 'button';
-        el.className = `chkobba-info-pill${_chkobbaExpandedInfoPill === p.key ? ' is-expanded' : ''}`;
-        el.dataset.pill = p.key;
-        el.innerHTML = `
-            <span class="info-pill-collapsed">${p.icon} <span class="info-pill-label">${p.label}</span> <strong>${p.value}</strong></span>
-            ${ _chkobbaExpandedInfoPill === p.key ? `<span class="info-pill-hint">${p.hint}</span>` : '' }
-        `;
-        el.onclick = () => {
-            _chkobbaExpandedInfoPill = _chkobbaExpandedInfoPill === p.key ? null : p.key;
-            _renderChkobbaInfoPills(state, me);
-        };
-        infoCont.appendChild(el);
-    });
-
-    // Voice Chat Toggle
-    const voiceActive = typeof _voiceOn !== 'undefined' && _voiceOn;
-    const vBtn = document.createElement('button');
-    vBtn.type = 'button';
-    vBtn.className = `chkobba-info-pill voice-info-pill ${voiceActive ? 'voice-active' : ''}`;
-    vBtn.innerHTML = `<span class="info-pill-collapsed">${voiceActive ? '🔴' : '🎙️'} <span class="info-pill-label">${voiceActive ? 'نقص الصوت' : 'نحل الصوت'}</span></span>`;
-    vBtn.onclick = () => {
-        if (typeof _voiceOn !== 'undefined' && _voiceOn) {
-            stopVoice();
-        } else {
-            if (_room) initVoice(_room.code);
-        }
-        setTimeout(() => _renderChkobbaInfoPills(state, me), 200);
-    };
-    infoCont.appendChild(vBtn);
-}
-
-async function _animateChkobbaDeal(deckEl, handEl, count, onDone) {
-    if (_prefersReducedMotion() || !deckEl || !handEl || count < 1) {
-        onDone?.(); return;
-    }
-
-    // 1. Deck Pulse
-    deckEl.style.transition = "transform 140ms var(--ease-pop)";
-    deckEl.style.transform = "scale(1.06)";
-    await new Promise(r => setTimeout(r, 140));
-    deckEl.style.transform = "scale(1)";
-
-    const from = deckEl.getBoundingClientRect();
-    const to = handEl.getBoundingClientRect();
-    const back = window.ChkobbaLogic.ASSETS.BACK;
-    let finished = 0;
-
-    // Compress stagger if many cards to keep sequence ≤ 900ms
-    const staggerMs = count > 3 ? 40 : 70;
-
-    for (let i = 0; i < count; i++) {
-        setTimeout(() => {
-            const targetRect = {
-                left: to.left + (i * 12), // Spread slightly in hand
-                top: to.top,
-                width: from.width, height: from.height
-            };
-
-            _animateChkobbaFlight({
-                fromRect: from,
-                toRect: targetRect,
-                imgSrc: back,
-                rotate: (Math.random() - 0.5) * 12,
-                duration: 260,
-                onDone: () => {
-                    finished++;
-                    if (finished >= count) onDone?.();
-                }
-            });
-        }, i * staggerMs);
-    }
 }
 
 function _showOnlineChkobba(room) {
@@ -4542,567 +3176,179 @@ function _showOnlineChkobba(room) {
     const me = state.players.find(p => p.id === _myId);
     const isMyTurn = state.players[state.turnIndex].id === _myId;
     const mode = state.mode || '1v1';
-    const roomPlayerMeta = (_room?.players || []).reduce((m, p) => { m[p.id] = p; return m; }, {});
 
-    if (!isMyTurn || state.phase === 'setup') _resetChkobbaPlaySession();
+    // Render opponents/players
+    const oppCont = document.getElementById('chkobba-opponents');
+    oppCont.innerHTML = '';
+    oppCont.className = `chkobba-opponents mode-${mode}`;
 
-    _renderChkobbaOpening(room, state);
+    const others = state.players.filter(p => p.id !== _myId);
+    others.forEach(p => {
+        const active = state.players[state.turnIndex].id === p.id;
+        const isTeammate = mode === '2v2' && p.team === me?.team;
+        const isExpanded = _onlineCoupSummaryExpandedId === p.id;
 
-    const playLocked = window.ChkobbaLogic.isSetupPhase(state);
-    const canInteract = isMyTurn && !playLocked;
-    const handDock = document.querySelector('.chkobba-hand-dock');
-    handDock?.classList.toggle('is-inactive-turn', state.phase === 'playing' && !isMyTurn);
+        const pill = document.createElement('div');
+        pill.className = `chkobba-player-pill ${active?'is-turn':''} ${isTeammate?'is-teammate':''} ${isExpanded?'is-expanded':''}`;
 
-    const prevSnap = _chkobbaLastSnapshot;
-    let dealCount = 0;
-    if (me && !_chkobbaSkipDealAnim) {
-        if (!prevSnap && me.hand.length > 0) dealCount = me.hand.length;
-        else if (prevSnap) dealCount = Math.max(0, me.hand.length - (prevSnap.myHandLen || 0));
-    }
-    const shouldDealAnim = dealCount > 0 && (!prevSnap || state.deck.length < prevSnap.deckLen);
+        pill.innerHTML = `
+            <div class="pill-main">
+                <div class="pill-avatar">${isTeammate?'🤝':'👤'}</div>
+                <div class="pill-info">
+                    <div class="pill-name">${_esc(p.name)}</div>
+                    <div class="pill-stats">
+                        <span>🃏 ${p.hand.length}</span>
+                        <span>🏆 ${p.totalScore}</span>
+                    </div>
+                </div>
+                <div class="pill-chevron">${isExpanded?'▲':'▼'}</div>
+            </div>
+            ${isExpanded ? `
+                <div class="pill-details">
+                    <div class="detail-row"><span>الشكبّات:</span> <strong>${p.chkobbas || 0}</strong></div>
+                    <div class="detail-row"><span>الاوراق الماكلة:</span> <strong>${p.captured?.length || 0}</strong></div>
+                    <div class="detail-row"><span>الديناري:</span> <strong>${p.captured?.filter(c => c.suit === 'diamonds').length || 0}</strong></div>
+                </div>
+            ` : ''}
+        `;
 
-    _chkobbaLastSnapshot = {
-        deckLen: state.deck.length,
-        myHandLen: me?.hand.length || 0,
-        round: state.round
-    };
+        pill.onclick = () => {
+            _onlineCoupSummaryExpandedId = isExpanded ? null : p.id;
+            _showOnlineChkobba(room);
+        };
+        oppCont.appendChild(pill);
+    });
 
-    _maybeShowChkobbaAnnouncement(state);
-
-    _renderChkobbaOpponentPills(room, state, me, mode, roomPlayerMeta);
-
+    // Render Table
     const tableCont = document.getElementById('chkobba-table');
-    
-    // Get existing cards to preserve them for animation
-    const existingCards = Array.from(tableCont.querySelectorAll('.table-card'));
-    const existingCardIds = new Set(existingCards.map(el => el.dataset.cardId));
-    
-    // Clear only cards that are no longer on the table
-    const newCardIds = new Set(state.table.map(c => c.id));
-    existingCards.forEach(el => {
-        if (!newCardIds.has(el.dataset.cardId)) {
-            el.remove();
-        }
-    });
-    
-    // Add or update cards
+    tableCont.innerHTML = '';
     state.table.forEach((card, idx) => {
-        let cardEl = tableCont.querySelector(`.table-card[data-card-id="${card.id}"]`);
-        if (!cardEl) {
-            // New card - render it
-            cardEl = _renderChkobbaCard(card, {
-                zone: 'table',
-                index: idx,
-                interactive: canInteract
-            });
-            tableCont.appendChild(cardEl);
-        } else {
-            // Existing card - update its index/rotation
-            cardEl.dataset.index = String(idx);
-            cardEl.style.setProperty('--rot', `${_tableCardRotation(idx, card.id)}deg`);
-        }
+        const img = document.createElement('img');
+        img.src = window.ChkobbaLogic.getCardAsset(card);
+        img.className = 'chkobba-card table-card';
+        img.dataset.cardId = card.id;
+        img.dataset.index = idx;
+        tableCont.appendChild(img);
     });
 
-    // Check total cards on table and apply appropriate size reduction
-    const tableCards = tableCont.querySelectorAll('.table-card');
-    const totalCards = tableCards.length;
-    
-    // Remove all stacking classes first
-    tableCont.classList.remove('is-stacked-30', 'is-stacked-60');
-    
-    // Apply appropriate class based on total cards
-    if (totalCards > 6) {
-        tableCont.classList.add('is-stacked-60');
-    } else if (totalCards > 4) {
-        tableCont.classList.add('is-stacked-30');
-    }
-
-    // Setup menu and voice button event listeners
-    _setupChkobbaMenuButtons();
-
-    // Render player info box
-    _renderChkobbaPlayerInfo(state, me, isMyTurn);
-
+    // Render Hand
     const handCont = document.getElementById('chkobba-my-hand');
-    const renderHand = () => {
-        handCont.innerHTML = '';
-        if (me) {
-            const total = me.hand.length;
-            me.hand.forEach((card, idx) => {
-                handCont.appendChild(_renderChkobbaCard(card, {
-                    zone: 'hand',
-                    index: idx,
-                    total,
-                    interactive: canInteract
-                }));
-            });
-        }
-        if (_chkobbaPlaySession) {
-            const armedIdx = _chkobbaPlaySession.handIndex;
-            handCont.querySelectorAll('.hand-card').forEach((el, i) => {
-                if (i === armedIdx) el.classList.add('is-armed');
-            });
-            _refreshChkobbaCaptureHighlights();
-            if (_chkobbaPlaySession.phase === 'readyCapture') _showChkobbaCaptureReadyBar();
-        }
-    };
+    handCont.innerHTML = '';
+    if (me) {
+        me.hand.forEach((card, idx) => {
+            const div = document.createElement('div');
+            div.className = 'chkobba-card hand-card';
+            if (isMyTurn) div.draggable = true;
+            div.dataset.cardId = card.id;
+            div.dataset.index = idx;
+            div.innerHTML = `<img src="${window.ChkobbaLogic.getCardAsset(card)}">`;
 
-    _renderChkobbaPiles(state, me);
-
-    if (playLocked) {
-        _renderChkobbaInfoPills(state, me);
-        _ensureChkobbaTableListeners();
-        return;
-    }
-
-    if (shouldDealAnim) {
-        _chkobbaSkipDealAnim = true;
-        handCont.innerHTML = '';
-        _animateChkobbaDeal(
-            document.getElementById('chkobba-deck-pile'),
-            handCont,
-            dealCount,
-            () => {
-                _chkobbaSkipDealAnim = false;
-                renderHand();
+            if (isMyTurn) {
+                div.addEventListener('dragstart', _onChkobbaDragStart);
+                div.addEventListener('dragend', _onChkobbaDragEnd);
             }
-        );
-    } else {
-        renderHand();
+            handCont.appendChild(div);
+        });
     }
 
-    _renderChkobbaInfoPills(state, me);
+    // Update Info
+    const infoCont = document.getElementById('chkobba-round-info');
+    infoCont.innerHTML = `
+        <div class="chkobba-info-pill">🂠 ${state.deck.length}</div>
+        <div class="chkobba-info-pill">🏆 ${me?.totalScore || 0}</div>
+    `;
 
-    _ensureChkobbaTableListeners();
+    // Enable drop on table
+    tableCont.addEventListener('dragover', e => e.preventDefault());
+    tableCont.addEventListener('drop', _onChkobbaDrop);
 
+    // Turn indicator
     const indicator = document.getElementById('coup-turn-indicator');
     if (indicator) {
         indicator.classList.remove('hidden');
-        const nameEl = document.getElementById('cti-player-name');
-        if (nameEl) nameEl.innerText = state.players[state.turnIndex].name;
-        _startOnlineChkobbaTimer(room);
+        document.getElementById('cti-player-name').innerText = state.players[state.turnIndex].name;
     }
-}
-
-let _chkobbaTimer = null;
-let _chkobbaTimingOut = false;
-let _chkobbaSetupAIBusy = false;
-
-function _startOnlineChkobbaTimer(room) {
-    clearInterval(_chkobbaTimer);
-    const timerEl = document.getElementById('chkobba-turn-timer');
-    if (!timerEl) return;
-
-    // Setup AI must run even when there is no timer (timer_end_at is null during setup phase)
-    if (_isHost && !_chkobbaSetupAIBusy) {
-        const s = room.word_obj;
-        if (s?.phase === 'setup') {
-            const cutter = s.players[s.cutterIndex];
-            if (cutter?.isAI) {
-                if (s.setupPhase === window.ChkobbaLogic.SETUP_PHASES.SHUFFLED) {
-                    _chkobbaSetupAIBusy = true;
-                    setTimeout(async () => {
-                        try { await _chkobbaPerformCutAI(); } finally { _chkobbaSetupAIBusy = false; }
-                    }, 800 + Math.random() * 800);
-                } else if (s.setupPhase === window.ChkobbaLogic.SETUP_PHASES.REVEALED) {
-                    _chkobbaSetupAIBusy = true;
-                    setTimeout(async () => {
-                        try {
-                            if (Math.random() > 0.5) await _chkobbaAcceptStarterAI();
-                            else await _chkobbaDeclineStarterAI();
-                        } finally { _chkobbaSetupAIBusy = false; }
-                    }, 800 + Math.random() * 800);
-                }
-            }
-        }
-    }
-
-    if (!room.timer_end_at) {
-        timerEl.classList.add('hidden');
-        return;
-    }
-
-    const isPlaying = room.word_obj?.phase === 'playing';
-    timerEl.classList.toggle('hidden', !isPlaying);
-
-    const tick = () => {
-        const endTime = new Date(room.timer_end_at).getTime();
-        const left = Math.max(0, Math.ceil((endTime - _syncedNow()) / 1000));
-
-        const m = Math.floor(left / 60).toString().padStart(2, '0');
-        const sec = (left % 60).toString().padStart(2, '0');
-        timerEl.innerText = `${m}:${sec}`;
-
-        if (left <= 10) timerEl.style.color = 'var(--danger-color)';
-        else timerEl.style.color = '';
-
-        const s = room.word_obj;
-        if (!s) return;
-
-        const p = s?.players?.[s.turnIndex];
-        const isAI = p?.isAI;
-
-        if (_isHost && !_chkobbaTimingOut && s?.phase === 'playing') {
-            if (left <= 0) {
-                _chkobbaTimeout();
-            } else if (isAI) {
-                // AI move after a short delay
-                const totalTurn = (new Date(room.timer_end_at).getTime() - endTime + (left*1000)); // approximate
-                const elapsed = (new Date(room.timer_end_at).getTime() - (left*1000)) - _syncedNow(); // this is not right
-                // Let's use a simpler logic: AI moves when left is less than (TurnTime - random(2,4))
-                const turnTime = room.config?.chkobbaTurnTime || 45;
-                if (left < (turnTime - 2 - Math.random() * 2)) {
-                    _chkobbaTimeout();
-                }
-            }
-        }
-    };
-
-    tick();
-    _chkobbaTimer = setInterval(tick, 500);
-}
-
-async function _chkobbaTimeout() {
-    if (!_room || _chkobbaTimingOut) return;
-    _chkobbaTimingOut = true;
-    try {
-        const s = _room.word_obj;
-        if (!s || s.phase !== 'playing') return;
-        const p = s.players[s.turnIndex];
-        if (!p || p.hand.length === 0) return;
-
-        const logic = window.ChkobbaLogic;
-        let chosenCardIndex = -1;
-        let bestMatch = null;
-
-        // Better AI logic:
-        // 1. Can we capture the 7 of diamonds?
-        // 2. Can we capture a 7?
-        // 3. Can we capture more than one card?
-        // 4. Capture highest value card.
-
-        const candidates = [];
-        for (let i = 0; i < p.hand.length; i++) {
-            const captures = logic.getValidCaptures(p.hand[i], s.table);
-            if (captures.length > 0) {
-                captures.forEach(match => {
-                    let score = match.length; // base score: number of cards captured
-                    if (match.some(c => c.id === 'diamonds_7') || p.hand[i].id === 'diamonds_7') score += 10;
-                    if (match.some(c => c.value === 7)) score += 5;
-                    if (match.some(c => c.suit === 'diamonds')) score += 2;
-                    candidates.push({ handIdx: i, match, score });
-                });
-            }
-        }
-
-        if (candidates.length > 0) {
-            candidates.sort((a, b) => b.score - a.score);
-            chosenCardIndex = candidates[0].handIdx;
-            bestMatch = candidates[0].match;
-        }
-
-        if (chosenCardIndex === -1) chosenCardIndex = 0;
-        const cardToPlay = p.hand[chosenCardIndex];
-
-        const runActualMutate = async () => {
-            const bestMatchIds = bestMatch ? bestMatch.map(c => c.id) : null;
-            await _mutatePlayers(_room.code, (players, room) => {
-                const rs = room.word_obj;
-                if (rs.phase !== 'playing') return null;
-                const rp = rs.players[rs.turnIndex];
-                if (!rp || rp.hand.length === 0) return null;
-
-                let cIdx = rp.hand.findIndex(c => c.id === cardToPlay.id);
-                if (cIdx === -1) cIdx = 0;
-                const card = rp.hand.splice(cIdx, 1)[0];
-
-                // Prefer the pre-scored best match; fall back to first valid capture
-                let match = null;
-                if (bestMatchIds) {
-                    const allCaptures = logic.getValidCaptures(card, rs.table);
-                    match = allCaptures.find(set =>
-                        set.length === bestMatchIds.length &&
-                        set.every(c => bestMatchIds.includes(c.id))
-                    ) || allCaptures[0] || null;
-                } else {
-                    const allCaptures = logic.getValidCaptures(card, rs.table);
-                    match = allCaptures.length > 0 ? allCaptures[0] : null;
-                }
-
-                if (match) {
-                    const capturedIds = match.map(c => c.id);
-                    const capturedCards = rs.table.filter(c => capturedIds.includes(c.id));
-                    rs.table = rs.table.filter(c => !capturedIds.includes(c.id));
-                    const allCaptured = [card, ...capturedCards];
-                    rp.captured.push(...allCaptured);
-                    rs.lastCaptureId = rp.id;
-                    if (rs.table.length === 0 && rs.deck.length > 0) {
-                        rp.chkobbas++;
-                        rs.chkobbaEvent = { type: 'chkobba', playerId: rp.id, name: rp.name };
-                    } else if (allCaptured.some(c => c.id === 'diamonds_7')) {
-                        rs.chkobbaEvent = { type: 'berria', playerId: rp.id, name: rp.name };
-                    }
-                } else {
-                    rs.table.push(card);
-                }
-                _advanceChkobbaTurn(rs, room);
-                room.word_obj = rs;
-                return players;
-            }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
-        };
-
-        const isMe = p.id === _myId;
-        const fromEl = isMe ? _chkobbaHandCardEl(chosenCardIndex) : _chkobbaOpponentPillEls.get(p.id);
-        const toEl = bestMatch ? (_chkobbaOpponentPillEls.get(p.id) || document.getElementById('chkobba-my-capture-pile')) : document.getElementById('chkobba-table');
-
-        if (_prefersReducedMotion() || !fromEl || !toEl) {
-            await runActualMutate();
-            return;
-        }
-
-        _chkobbaAnimating = true;
-        if (isMe && fromEl) fromEl.style.opacity = '0';
-
-        if (bestMatch) {
-            const flights = [];
-            flights.push({
-                fromRect: fromEl.getBoundingClientRect(),
-                toRect: toEl.getBoundingClientRect(),
-                imgSrc: logic.getCardAsset(cardToPlay),
-                rotate: 4,
-                withGhost: true,
-                staggerAfter: 60
-            });
-            bestMatch.forEach((c, i) => {
-                const tEl = document.querySelector(`#chkobba-table .table-card[data-card-id="${c.id}"]`);
-                if (tEl) {
-                    tEl.style.opacity = '0';
-                    flights.push({
-                        fromRect: tEl.getBoundingClientRect(),
-                        toRect: toEl.getBoundingClientRect(),
-                        imgSrc: logic.getCardAsset(c),
-                        rotate: (i % 2 === 0 ? 1 : -1) * (6 + i * 2),
-                        withGhost: true,
-                        staggerAfter: 60
-                    });
-                }
-            });
-            _animateChkobbaFlightsSequential(flights, async () => {
-                _chkobbaAnimating = false;
-                await runActualMutate();
-            });
-        } else {
-            _animateChkobbaFlight({
-                fromRect: fromEl.getBoundingClientRect(),
-                toRect: toEl.getBoundingClientRect(),
-                imgSrc: logic.getCardAsset(cardToPlay),
-                rotate: -6,
-                onDone: async () => {
-                    _chkobbaAnimating = false;
-                    await runActualMutate();
-                }
-            });
-        }
-    } catch(e) { console.error(e); }
-    finally { _chkobbaTimingOut = false; }
 }
 
 function _onChkobbaDragStart(e) {
-    const cardEl = e.target.closest('.chkobba-card.hand-card');
-    if (!cardEl) return;
-    if (_chkobbaPlaySession?.phase === 'readyCapture') {
-        e.preventDefault();
-        return;
-    }
-    if (!_chkobbaPlaySession) _armChkobbaHandCard(cardEl);
-    e.dataTransfer?.setData('text/plain', cardEl.dataset.index);
-    cardEl.classList.add('is-dragging');
+    const cardId = e.target.closest('.chkobba-card').dataset.cardId;
+    const index = e.target.closest('.chkobba-card').dataset.index;
+    _chkobbaDragData = { cardId, index };
+    e.target.closest('.chkobba-card').classList.add('dragging');
 }
 
 function _onChkobbaDragEnd(e) {
-    const cardEl = e.target.closest('.chkobba-card');
-    cardEl?.classList.remove('is-dragging');
-    document.getElementById('chkobba-table')?.classList.remove('is-drop-target');
-    document.getElementById('chkobba-my-capture-pile')?.classList.remove('is-drop-target');
+    e.target.closest('.chkobba-card').classList.remove('dragging');
 }
 
-async function _onChkobbaTableDrop(e) {
+async function _onChkobbaDrop(e) {
     e.preventDefault();
-    document.getElementById('chkobba-table')?.classList.remove('is-drop-target');
-    if (!_chkobbaPlaySession) return;
+    if (!_chkobbaDragData || !_room || !_room.word_obj) return;
 
-    const targetCardEl = e.target?.closest?.('.table-card');
-    if (targetCardEl && _chkobbaPlaySession.phase === 'selecting') {
-        _onChkobbaTableCardTap(targetCardEl);
-        return;
-    }
-    if (_chkobbaPlaySession.phase === 'armed' && !targetCardEl) {
-        await _commitChkobbaPlayToTable();
-    }
-}
+    const state = _room.word_obj;
+    const me = state.players.find(p => p.id === _myId);
+    if (!me || state.players[state.turnIndex].id !== _myId) return;
 
-async function _commitChkobbaCapture() {
-    if (_chkobbaAnimating) return;
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx || !_chkobbaPlaySession || _chkobbaPlaySession.phase !== 'readyCapture') return;
+    const playedCard = me.hand[_chkobbaDragData.index];
 
-    const handIndex = _chkobbaPlaySession.handIndex;
-    const playedCard = _chkobbaPlaySession.playedCard;
-    const capturedIds = (_chkobbaPlaySession.captureSet || []).map(c => c.id);
-    const logic = ctx.logic;
+    // Find capture targets
+    const targetCardEl = e.target.closest('.table-card');
+    let capturedIds = [];
 
-    const valid = logic.findMatchingCapture(playedCard, ctx.state.table, capturedIds);
-    if (!valid) {
-        showToast('ماكلة غير صالحة.');
-        _resetChkobbaPlaySession();
-        return;
-    }
+    const logic = window.ChkobbaLogic;
+    const allValidCaptures = logic.getValidCaptures(playedCard, state.table);
 
-    const pileEl = _chkobbaOpponentPillEls.get(_myId) || document.getElementById('chkobba-my-capture-pile');
-    const handEl = _chkobbaHandCardEl(handIndex);
-    const pileRect = pileEl?.getBoundingClientRect();
-    const flights = [];
-
-    if (handEl && pileRect) {
-        handEl.style.opacity = '0';
-        flights.push({
-            fromRect: handEl.getBoundingClientRect(),
-            toRect: pileRect,
-            imgSrc: logic.getCardAsset(playedCard),
-            rotate: 4,
-            withGhost: true,
-            staggerAfter: 60
-        });
-    }
-    capturedIds.forEach((id, i) => {
-        const tableEl = document.querySelector(`#chkobba-table .table-card[data-card-id="${id}"]`);
-        const card = ctx.state.table.find(c => c.id === id);
-        if (tableEl && pileRect && card) {
-            tableEl.style.opacity = '0';
-            flights.push({
-                fromRect: tableEl.getBoundingClientRect(),
-                toRect: pileRect,
-                imgSrc: logic.getCardAsset(card),
-                rotate: (i % 2 === 0 ? 1 : -1) * (6 + i * 2),
-                withGhost: true,
-                staggerAfter: 60
-            });
+    if (targetCardEl) {
+        const targetId = targetCardEl.dataset.cardId;
+        const validSet = allValidCaptures.find(set => set.some(c => c.id === targetId));
+        if (validSet) {
+            capturedIds = validSet.map(c => c.id);
+        } else {
+            showToast("الاختيار هذا غالط، ما تنجمش تاخو الكارتة هاذي.");
+            return;
         }
-    });
+    } else {
+        // Drop on empty table space
+        if (allValidCaptures.length > 0) {
+            showToast("لازم تاكل! فما كوارط تنجم تاخذهم.");
+            return;
+        }
+    }
 
-    const runMutate = async () => {
-        await _mutatePlayers(_room.code, (players, room) => {
-            const s = room.word_obj;
-            const p = s.players.find(x => x.id === _myId);
-            if (!p || s.players[s.turnIndex].id !== _myId) return null;
+    // Perform move mutation
+    await _mutatePlayers(_room.code, (players, room) => {
+        const s = room.word_obj;
+        const p = s.players.find(x => x.id === _myId);
+        if (!p || s.players[s.turnIndex].id !== _myId) return null;
 
-            const card = p.hand[handIndex];
-            if (!card) return null;
-            const match = logic.findMatchingCapture(card, s.table, capturedIds);
-            if (!match) return null;
+        const card = p.hand.splice(_chkobbaDragData.index, 1)[0];
 
-            p.hand.splice(handIndex, 1);
+        if (capturedIds.length > 0) {
             const capturedCards = s.table.filter(c => capturedIds.includes(c.id));
             s.table = s.table.filter(c => !capturedIds.includes(c.id));
-            const allCaptured = [card, ...capturedCards];
-            p.captured.push(...allCaptured);
+            p.captured.push(card, ...capturedCards);
             s.lastCaptureId = _myId;
 
+            // Check for Chkobba
             if (s.table.length === 0 && s.deck.length > 0) {
                 p.chkobbas++;
                 s.chkobbaEvent = { type: 'chkobba', playerId: _myId, name: p.name };
-            } else if (allCaptured.some(c => c.id === 'diamonds_7')) {
-                s.chkobbaEvent = { type: 'berria', playerId: _myId, name: p.name };
             }
-
-            _advanceChkobbaTurn(s, room);
-            return players;
-        }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
-
-        _resetChkobbaPlaySession();
-    };
-
-    if (_prefersReducedMotion() || !flights.length) {
-        await runMutate();
-        return;
-    }
-
-    _chkobbaAnimating = true;
-    _animateChkobbaFlightsSequential(flights, async () => {
-        _chkobbaAnimating = false;
-        await runMutate();
-    });
-}
-
-async function _commitChkobbaPlayToTable() {
-    if (_chkobbaAnimating) return;
-    const ctx = _getChkobbaPlayContext();
-    if (!ctx || !_chkobbaPlaySession) return;
-
-    const handIndex = _chkobbaPlaySession.handIndex;
-    const playedCard = _chkobbaPlaySession.playedCard;
-    const captures = ctx.logic.getValidCaptures(playedCard, ctx.state.table);
-    if (captures.length > 0) {
-        showToast('لازم تاكل! فما كوارط تنجم تاخذهم.');
-        return;
-    }
-
-    const handEl = _chkobbaHandCardEl(handIndex);
-    const tableEl = document.getElementById('chkobba-table');
-    const imgSrc = ctx.logic.getCardAsset(playedCard);
-
-    const tableRect = tableEl?.getBoundingClientRect();
-    const tableCardsCount = ctx.state.table.length;
-    const targetRect = tableRect ? {
-        left: tableRect.left + (tableRect.width / 2) + (tableCardsCount * 12) - 40,
-        top: tableRect.top + (tableRect.height / 2),
-        width: tableRect.width / 4,
-        height: tableRect.height / 2
-    } : null;
-
-    const runMutate = async () => {
-        await _mutatePlayers(_room.code, (players, room) => {
-            const s = room.word_obj;
-            const p = s.players.find(x => x.id === _myId);
-            if (!p || s.players[s.turnIndex].id !== _myId) return null;
-
-            const card = p.hand.splice(handIndex, 1)[0];
+        } else {
             s.table.push(card);
-            _advanceChkobbaTurn(s, room);
-            return players;
-        }, null, (room, players) => ({ word_obj: room.word_obj, timer_end_at: room.timer_end_at }));
-
-        _resetChkobbaPlaySession();
-    };
-
-    if (_prefersReducedMotion() || !handEl || !tableEl) {
-        await runMutate();
-        return;
-    }
-
-    _chkobbaAnimating = true;
-    if (handEl) handEl.style.opacity = '0';
-    _animateChkobbaFlight({
-        fromRect: handEl.getBoundingClientRect(),
-        toRect: targetRect || tableEl.getBoundingClientRect(),
-        imgSrc,
-        rotate: -6,
-        onDone: async () => {
-            _chkobbaAnimating = false;
-            await runMutate();
         }
-    });
+
+        // Next turn or Next deal
+        _advanceChkobbaTurn(s);
+
+        return players;
+    }, null, (room, players) => ({ word_obj: room.word_obj }));
+
+    _chkobbaDragData = null;
 }
 
-function _advanceChkobbaTurn(state, roomObj) {
+function _advanceChkobbaTurn(state) {
     state.turnIndex = (state.turnIndex + 1) % state.players.length;
-
-    const actualRoom = roomObj || _room;
-    if (actualRoom && _isHost) {
-        const turnTime = actualRoom.config?.chkobbaTurnTime || 45;
-        const timerEndAt = new Date(_syncedNow() + turnTime * 1000).toISOString();
-        actualRoom.timer_end_at = timerEndAt;
-    }
 
     // Check if everyone played their 3 cards
     const allEmpty = state.players.every(p => p.hand.length === 0);
@@ -5114,12 +3360,12 @@ function _advanceChkobbaTurn(state, roomObj) {
             });
         } else {
             // End of round scoring
-            _endChkobbaRound(state, roomObj);
+            _endChkobbaRound(state);
         }
     }
 }
 
-function _endChkobbaRound(state, roomObj) {
+function _endChkobbaRound(state) {
     // Last capture takes leftovers
     if (state.table.length > 0 && state.lastCaptureId) {
         const winner = state.players.find(p => p.id === state.lastCaptureId);
@@ -5165,66 +3411,18 @@ function _endChkobbaRound(state, roomObj) {
         });
         state.round++;
         state.turnIndex = 0; // Usually dealer moves, but we'll keep it simple
-
-        const actualRoom = roomObj || _room;
-        if (actualRoom && _isHost) {
-            const turnTime = actualRoom.config?.chkobbaTurnTime || 45;
-            const timerEndAt = new Date(_syncedNow() + turnTime * 1000).toISOString();
-            actualRoom.timer_end_at = timerEndAt;
-        }
-    }
-}
-
-function _spawnChkobbaConfetti(layer, variant = 'gold') {
-    if (_prefersReducedMotion() || !layer) return;
-    const colors = variant === 'berria'
-        ? ['#528c71', '#74b9ff', '#a8e6cf', '#fff']
-        : ['#f1c051', '#ffeaa7', '#fdcb6e', '#fff'];
-    for (let i = 0; i < 14; i++) {
-        const bit = document.createElement('span');
-        bit.className = 'chkobba-confetti-bit';
-        bit.style.left = `${42 + Math.random() * 16}%`;
-        bit.style.top = `${44 + Math.random() * 12}%`;
-        bit.style.background = colors[i % colors.length];
-        bit.style.setProperty('--confetti-dx', `${(Math.random() - 0.5) * 120}px`);
-        bit.style.setProperty('--confetti-dy', `${-40 - Math.random() * 80}px`);
-        bit.style.setProperty('--confetti-rot', `${Math.random() * 540}deg`);
-        bit.style.animationDelay = `${i * 35}ms`;
-        layer.appendChild(bit);
-        setTimeout(() => bit.remove(), 1400);
     }
 }
 
 function _handleChkobbaBroadcastEvent(event) {
-    const layer = document.getElementById('chkobba-deal-layer');
-    const isBerria = event.type === 'berria';
-    const isChkobba = event.type === 'chkobba';
-
-    if (!isBerria && !isChkobba) return;
-
-    const wrap = document.createElement('div');
-    wrap.className = `chkobba-celebration-wrap${isBerria ? ' is-berria' : ''}`;
-
-    const cardFlip = document.createElement('div');
-    cardFlip.className = 'chkobba-celebration-card';
-    const flipImg = document.createElement('img');
-    flipImg.alt = '';
-    flipImg.src = isBerria
-        ? window.ChkobbaLogic.getCardAsset({ suit: 'diamonds', value: 7 })
-        : window.ChkobbaLogic.ASSETS.BACK;
-    cardFlip.appendChild(flipImg);
-    wrap.appendChild(cardFlip);
-
-    const announce = document.createElement('div');
-    announce.className = `chkobba-announcement chkobba-announcement--celebration${isBerria ? ' is-berria' : ''}`;
-    announce.innerText = isBerria ? 'السبعة الحية!' : 'شكبّة!';
-    wrap.appendChild(announce);
-
-    document.body.appendChild(wrap);
-    _spawnChkobbaConfetti(layer, isBerria ? 'berria' : 'gold');
-    _sfx.win();
-
-    setTimeout(() => wrap.remove(), isBerria ? 1850 : 2000);
+    if (event.type === 'chkobba') {
+        const announce = document.createElement('div');
+        announce.className = 'chkobba-announcement';
+        announce.innerText = 'شكبّة!';
+        document.body.appendChild(announce);
+        _sfx.win();
+        setTimeout(() => announce.remove(), 2000);
+    }
 }
 
 // Expose for verification/debugging
@@ -5349,9 +3547,12 @@ function _renderActiveTournamentMatch(matchId) {
 
 function _initMatch(match, config) {
     const logic = window.ChkobbaLogic;
-    const gameState = logic.createNewGameState(
-        match.players.map(p => ({ id: p.id, name: p.name })),
-        { mode: config.chkobbaMode || '1v1', targetScore: config.chkobbaTarget || 21 }
-    );
-    Object.assign(match, gameState);
+    const deck = logic.createDeck();
+    match.deck = deck;
+    match.table = [deck.pop(), deck.pop(), deck.pop(), deck.pop()];
+    match.players.forEach(p => {
+        p.hand = [deck.pop(), deck.pop(), deck.pop()];
+    });
+    match.turnIndex = 0;
+    match.state = 'playing';
 }
